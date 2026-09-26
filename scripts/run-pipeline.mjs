@@ -8,7 +8,7 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { loadRouting } from '../lib/routing.mjs';
-import { loadRegistry } from '../lib/registry.mjs';
+import { loadPiRegistry } from '../adapters/pi/lib/model-registry.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { resolveAgents, resolveCapability } from '../lib/resolve.mjs';
 import { runPipeline, surveyRepo, scoutPrompt, detectTestCommand, runTests, coderPrompt } from '../lib/pipeline.mjs';
@@ -25,7 +25,7 @@ const outDir = resolve(opt('out', join(kit, 'adapters/pi/out/pipeline')));
 const maxAttempts = Number(opt('max-attempts', 2));
 
 const routing = loadRouting(join(kit, 'routing/routing.json'));
-const { registry, sources } = loadRegistry(join(kit, 'adapters/pi/models.json'), join(kit, 'adapters/pi/models.local.json'), routing);
+const { registry, sources } = loadPiRegistry(kit, routing);
 const { agents, errors } = loadAgents(join(kit, 'agents'), routing);
 if (errors.length) { console.error(errors.join('\n')); process.exit(1); }
 const resolved = resolveAgents(agents, routing, registry);

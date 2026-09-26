@@ -2,7 +2,7 @@
 // and a fixture-repo E2E with a scripted invoker (no model calls).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, cpSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, cpSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ import { normalizeContextPack, classifyPath, relativizeText } from '../lib/norma
 import { withEscalation, runPipeline, parseFileBlocks, runTests } from '../lib/pipeline.mjs';
 import { buildSettingsProposal } from '../adapters/pi/lib/settings-proposal.mjs';
 import { createScriptedInvoker } from '../adapters/pi/lib/invoke.mjs';
+import { loadPiRegistry, piUserModelsPath } from '../adapters/pi/lib/model-registry.mjs';
 
 const kit = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const routing = loadRouting(join(kit, 'routing/routing.json'));
@@ -58,6 +59,31 @@ test('registry: loadRegistry merges files and rejects invalid local file', () =>
   assert.throws(() => loadRegistry(join(dir, 'models.json'), join(dir, 'models.local.json'), routing), /models.local.json: backend "nope"/);
   const shipped = loadRegistry(join(kit, 'adapters/pi/models.json'), null, routing);
   assert.equal(shipped.sources.local, null);
+});
+
+test('pi user bindings override package-local bindings without writing to the agent directory', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ludi-pi-reg-'));
+  const adapter = join(dir, 'adapters', 'pi');
+  const home = join(dir, 'home');
+  mkdirSync(adapter, { recursive: true });
+  const userPath = piUserModelsPath({}, home);
+  mkdirSync(dirname(userPath), { recursive: true });
+  const file = (path, backends) => writeFileSync(path, JSON.stringify({ version: 1, backends }));
+  file(join(adapter, 'models.json'), { devin: { provider: 'TODO-provider', model: 'TODO-model', thinking: 'low' } });
+  file(join(adapter, 'models.local.json'), { devin: { provider: 'package', model: 'old' }, sol: { provider: 'package', model: 'fallback' } });
+  file(userPath, { devin: { provider: 'user', model: 'new' } });
+  const merged = loadPiRegistry(dir, routing, { env: {}, home });
+  assert.equal(merged.registry.backends.devin.model, 'new');
+  assert.equal(merged.registry.backends.devin.thinking, 'low');
+  assert.equal(merged.registry.backends.sol.model, 'fallback');
+  assert.equal(merged.sources.user, userPath);
+  rmSync(join(adapter, 'models.local.json'));
+  assert.equal(loadPiRegistry(dir, routing, { env: {}, home }).registry.backends.devin.model, 'new');
+  file(join(adapter, 'models.local.json'), { devin: { provider: 'package', model: 'old' } });
+  assert.equal(loadPiRegistry(dir, routing, { env: { PI_CODING_AGENT_DIR: join(dir, 'empty') }, home }).sources.user, null);
+  assert.equal(piUserModelsPath({ PI_CODING_AGENT_DIR: join(dir, 'custom') }, home), join(dir, 'custom', 'ludi-agent-kit', 'models.local.json'));
+  file(userPath, { devin: { apiKey: 'bad' } });
+  assert.throws(() => loadPiRegistry(dir, routing, { env: {}, home }), /must not store credentials/);
 });
 
 // ---------- resolution ----------

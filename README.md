@@ -77,7 +77,8 @@ Requirements for local validation: Windows, PowerShell 7, Git and Node.js with `
 ## Executable path (Phase 2)
 
 ```powershell
-Copy-Item adapters/pi/models.local.example.json adapters/pi/models.local.json   # then edit with `pi --list-models` ids
+New-Item -ItemType Directory -Force "$HOME/.pi/agent/ludi-agent-kit" | Out-Null
+Copy-Item adapters/pi/models.local.example.json "$HOME/.pi/agent/ludi-agent-kit/models.local.json"  # edit with `pi --list-models` ids; use $env:PI_CODING_AGENT_DIR/ludi-agent-kit if set
 node scripts/resolve-capabilities.mjs                                            # chains + out/settings.proposal.json
 node scripts/run-pipeline.mjs --repo <fixture-copy> --task "Fix the failing test" --dry-run
 node scripts/run-pipeline.mjs --repo <fixture-copy> --task "Fix the failing test"           # real: scout -> pack -> coder -> tests
@@ -90,7 +91,7 @@ never the same modelId twice, failures appended to `previous_attempts`. See `doc
 
 ## Orchestration and safety
 
-`node scripts/orchestrate.mjs --dry-run "<request>"` previews a rules-based plan without launching agents. A live invocation can call external models and consume quota; review the plan, model availability and `docs/orchestrator.md` before using it. `sync-pi.ps1` is dry-run by default; `-Apply` writes to the chosen pi agent directory. The optional real E2E scripts are not part of routine validation.
+`node scripts/orchestrate.mjs --dry-run "<request>"` previews a rules-based plan without launching agents. A live invocation can call external models and consume quota; review the plan, model availability and `docs/orchestrator.md` before using it. Before creating a run, the orchestrator checks that each planned capability has at least one concrete model binding (and checks `orchestration` before model planning); a missing binding reports the user-level file to edit. This is a binding check, not an authentication/quota probe. `sync-pi.ps1` is dry-run by default; `-Apply` writes to the chosen pi agent directory. The optional real E2E scripts are not part of routine validation.
 
 ## Distribution checklist
 

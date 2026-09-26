@@ -9,7 +9,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { loadRouting } from '../lib/routing.mjs';
-import { loadRegistry } from '../lib/registry.mjs';
+import { loadPiRegistry } from '../adapters/pi/lib/model-registry.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { loadPolicy, mergePolicy } from '../lib/orchestrator/policy.mjs';
 import { openStore } from '../lib/orchestrator/store.mjs';
@@ -38,7 +38,7 @@ const plan = [
 
 function context(repo) {
   const routing = loadRouting(join(kit, 'routing/routing.json'));
-  const { registry } = loadRegistry(join(kit, 'adapters/pi/models.json'), join(kit, 'adapters/pi/models.local.json'), routing);
+  const { registry } = loadPiRegistry(kit, routing);
   const { agents } = loadAgents(join(kit, 'agents'), routing);
   const { policy } = loadPolicy(join(kit, 'orchestration/decision-policy.json'));
   // Stay on cheap-code so a hosted usage limit falls through to the local candidate instead of the hosted-only ladder.

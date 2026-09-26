@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, cpSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,7 @@ import { newTask } from '../lib/orchestrator/task-store.mjs';
 import { classifyBackendFailure, createHealthMonitor } from '../lib/orchestrator/health.mjs';
 import { evaluateDecision } from '../lib/orchestrator/escalation.mjs';
 import { orchestrate } from '../lib/orchestrator/orchestrator.mjs';
+import { loadOrchestrationContext, startOrchestration } from '../lib/orchestrator/api.mjs';
 
 const kit = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const routing = loadRouting(join(kit, 'routing/routing.json'));
@@ -33,6 +34,42 @@ const completed = (task, extra = {}) => ({ ok: true, structured: true, modelId: 
   acceptance: [{ id: 'A1', met: true, evidence: 'observed' }], remainingIssues: [], decisions: [], newTasks: [], ...extra } });
 const blocked = decisions => ({ ok: true, structured: true, result: { status: 'blocked', summary: 'need a choice', artifacts: [], verification: [], acceptance: [], remainingIssues: [], decisions, newTasks: [] } });
 const dbPath = () => join(mkdtempSync(join(tmpdir(), 'ludi-orch-')), 'state.db');
+
+test('unbound task capability fails before a run is created with the user binding path', async () => {
+  const path = dbPath();
+  const session = openStore(path);
+  const userPath = join(dirname(path), 'agent', 'ludi-agent-kit', 'models.local.json');
+  try {
+    await assert.rejects(orchestrate({ request: 'implement', plan: [spec('a', 'coder')], agents, routing,
+      registry: { version: 1, backends: { devin: { provider: 'TODO-provider', model: 'TODO-model' } } },
+      bindingPath: userPath, policy: DEFAULT_POLICY, session, runner: { async run() { throw new Error('should not run'); } },
+    }), error => error.message.includes('strong-code') && error.message.includes(userPath));
+    assert.deepEqual(session.listRuns(), []);
+    await assert.rejects(orchestrate({ request: 'plan', planner: 'model', agents, routing,
+      registry: { version: 1, backends: {} }, bindingPath: userPath, policy: DEFAULT_POLICY, session,
+      invoke: async () => { throw new Error('should not plan'); },
+    }), /required capability "orchestration"/);
+    assert.deepEqual(session.listRuns(), []);
+  } finally { session.close(); }
+});
+
+test('API start uses the user-level binding path without touching the real agent directory', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'ludi-model-home-'));
+  const isolatedKit = mkdtempSync(join(tmpdir(), 'ludi-model-kit-'));
+  cpSync(join(kit, 'routing'), join(isolatedKit, 'routing'), { recursive: true, filter: path => !path.endsWith('.local.json') });
+  cpSync(join(kit, 'agents'), join(isolatedKit, 'agents'), { recursive: true });
+  mkdirSync(join(isolatedKit, 'adapters', 'pi'), { recursive: true });
+  mkdirSync(join(isolatedKit, 'orchestration'), { recursive: true });
+  copyFileSync(join(kit, 'adapters/pi/models.json'), join(isolatedKit, 'adapters/pi/models.json'));
+  copyFileSync(join(kit, 'orchestration/decision-policy.json'), join(isolatedKit, 'orchestration/decision-policy.json'));
+  const ctx = loadOrchestrationContext({ kit: isolatedKit, storePath: dbPath(), modelOptions: { env: {}, home } });
+  try {
+    await assert.rejects(startOrchestration(ctx, { request: 'implement', plan: [spec('a', 'coder')],
+      runner: { async run() { throw new Error('should not run'); } } }),
+    error => error.message.includes(join(home, '.pi', 'agent', 'ludi-agent-kit', 'models.local.json')));
+    assert.deepEqual(ctx.session.listRuns(), []);
+  } finally { ctx.session.close(); }
+});
 
 test('persistent run creation stores the run, tasks and trace', async () => {
   const session = openStore(dbPath());

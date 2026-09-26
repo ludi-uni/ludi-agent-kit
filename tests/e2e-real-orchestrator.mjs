@@ -8,7 +8,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { loadRouting } from '../lib/routing.mjs';
-import { loadRegistry } from '../lib/registry.mjs';
+import { loadPiRegistry } from '../adapters/pi/lib/model-registry.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { loadPolicy } from '../lib/orchestrator/policy.mjs';
 import { createAgentRunner } from '../lib/orchestrator/runner.mjs';
@@ -17,7 +17,7 @@ import { createPiInvoker } from '../adapters/pi/lib/invoke.mjs';
 
 const kit = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const routing = loadRouting(join(kit, 'routing/routing.json'));
-const { registry } = loadRegistry(join(kit, 'adapters/pi/models.json'), join(kit, 'adapters/pi/models.local.json'), routing);
+const { registry } = loadPiRegistry(kit, routing);
 const { agents } = loadAgents(join(kit, 'agents'), routing);
 const { policy } = loadPolicy(join(kit, 'orchestration/decision-policy.json'));
 const repo = mkdtempSync(join(tmpdir(), 'ludi-real-orch-'));

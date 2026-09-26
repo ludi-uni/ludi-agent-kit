@@ -12,7 +12,7 @@ automatically.
 | --- | --- | --- |
 | routing | `routing/routing.json` | capabilities, backend tiers, `requires.vision` |
 | agents | `agents/*.md` | capability → agent names (for `affected.agents`) |
-| model bindings | `adapters/<x>/models.json` + `models.local.json` | current provider/model per backend |
+| model bindings | `adapters/pi/models.json` < legacy `adapters/pi/models.local.json` < `~/.pi/agent/ludi-agent-kit/models.local.json` (`PI_CODING_AGENT_DIR` respected) | current provider/model per backend; user-level overrides survive npm upgrades |
 | catalog | `adapters/<x>/model-catalog.json` | model facts: status, cost, contextK, vision, toolUse, quality scores, `location`/`local` power metadata |
 | exec policy | `adapters/<x>/maintenance-policy.json` | Phase 2: requiredQuality per tier, capabilityRequirements (coding/reasoning floors), cost weights, electricity price, escalation thresholds |
 | events | `--events <file>` | what changed (see event types below) |
@@ -86,7 +86,7 @@ binding embedded plus the manual steps to restore it.
 ## Applying and rolling back
 
 The task writes only `adapters/<x>/out/model-maintenance.proposal.json`. To apply:
-edit `adapters/<x>/models.local.json` per `proposedModel`, re-run
+edit the user-level `ludi-agent-kit/models.local.json` per `proposedModel`, re-run
 `scripts/resolve-capabilities.mjs`, then merge `out/settings.proposal.json` into
 `~/.pi/agent/settings.json` yourself. Rollback is the same flow using
 `rollback.previousBinding`. It never writes `settings.json`, `models.json`,

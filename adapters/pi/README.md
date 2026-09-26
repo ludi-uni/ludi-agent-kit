@@ -6,7 +6,8 @@ Binds the neutral kit to a native-Windows pi installation (`~/.pi/agent`, or
 | File | Role |
 | --- | --- |
 | `models.json` | shared TEMPLATE: logical backend -> pi `provider`/`model`/`thinking`. Ships with `TODO-*` placeholders that the resolver skips. |
-| `models.local.json` | **gitignored** machine-local bindings; overrides `models.json` per backend and may add backends. Copy `models.local.example.json` and fill from `pi --list-models`. Allowed keys: `provider, model, thinking, vision, note`. Credentials are rejected by the validator. |
+| `~/.pi/agent/ludi-agent-kit/models.local.json` | **Recommended durable user-level bindings**, outside the npm install (use `$env:PI_CODING_AGENT_DIR/ludi-agent-kit/models.local.json` when set). Copy `models.local.example.json` and fill from `pi --list-models`. Overrides package-local bindings per field and may add backends. Allowed keys: `provider, model, thinking, vision, note`; credentials are rejected. The kit reads this file but never writes it. |
+| `models.local.json` | **gitignored package-local migration fallback**; still overrides `models.json` when present, but is overridden by the user-level file. Existing machine-local files continue to work without migration; a package upgrade may remove this file. |
 | `lib/invoke.mjs` | one-shot model call through the installed pi CLI (`node <pi cli.js> -p --model provider/id:thinking --no-tools --no-session --no-approve --system-prompt ...`). Uses pi's own auth store. Verified against `qoder/Qwen3.8-Flash` and `devin/swe-2-high` — no provider-specific runner is needed; any provider registered in pi's model store works. |
 | `lib/subagent.mjs` | tool-capable child (`pi --mode json -p`). **Do not pass `--no-extensions`**: providers registered by pi extensions (qoder, devin) are absent from the static model store and only resolve once their extension has loaded; with `--no-extensions` `--model` fails `Model ... not found`. Kit extensions the child needs are passed explicitly (`-e shell-gate`). |
 | `lib/settings-proposal.mjs` | renders resolved agents into `subagents.agentOverrides.<agent>.{model,thinking}` — the shape verified in pi-subagents 0.68.0 (`docs/models.md`, `src/agents/agents.ts parseBuiltinOverrideEntry`). pi-subagents removed `fallbackModels`, so fallback chains are *not* expressible there; the kit runner owns escalation. |
@@ -25,14 +26,15 @@ Binds the neutral kit to a native-Windows pi installation (`~/.pi/agent`, or
 ```
 agents/<name>.md  capability
    -> routing/routing.json   primary + fallback backends
-   -> models.json + models.local.json   provider/model/thinking per backend
+   -> models.json < package-local models.local.json < user-level models.local.json
+      provider/model/thinking per backend (later source overrides fields)
    -> "provider/model:thinking"  (pi --model syntax / pi-subagents model syntax)
 ```
 
 Logical backends include `qoder` (cheap-first, bound to `qoder/Qwen3.8-Flash` on this
 machine) and `devin` (strong-first, bound to `devin/swe-2-high`). Both are ordinary
 pi providers — the kit never forks a runner per provider; bindings live only in
-`models.local.json` and facts in `model-catalog.json`. If Codex quota is exhausted,
+the user-level `models.local.json` (or legacy package-local file) and facts in `model-catalog.json`. If Codex quota is exhausted,
 cheap-code still resolves `qoder -> cheap -> local -> sol` and strong-code
 `devin -> qoder -> sol -> codex -> local`, so the orchestrator keeps running on
 Qoder/Devin/FreeToken without any code change.

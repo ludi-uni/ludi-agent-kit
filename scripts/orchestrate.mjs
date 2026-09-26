@@ -18,7 +18,8 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { loadRouting } from '../lib/routing.mjs';
-import { loadRegistry } from '../lib/registry.mjs';
+import { loadPiRegistry, piUserModelsPath } from '../adapters/pi/lib/model-registry.mjs';
+import { resolveCapability } from '../lib/resolve.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { loadPolicy } from '../lib/orchestrator/policy.mjs';
 import { dryRun, formatPlan } from '../lib/orchestrator/orchestrator.mjs';
@@ -63,7 +64,7 @@ const planner = opts.planner ?? 'rules';
 if (!['rules', 'model'].includes(planner)) { console.error(`unknown planner "${planner}"`); process.exit(2); }
 
 const routing = loadRouting(join(kit, 'routing/routing.json'));
-const { registry } = loadRegistry(join(kit, 'adapters/pi/models.json'), join(kit, 'adapters/pi/models.local.json'), routing);
+const { registry } = loadPiRegistry(kit, routing);
 const { agents, errors } = loadAgents(join(kit, 'agents'), routing);
 if (errors.length) { console.error(errors.join('\n')); process.exit(1); }
 const { policy } = opts.policy
@@ -74,6 +75,7 @@ const outDir = resolve(opts.out ?? join(kit, 'adapters/pi/out/orchestrate'));
 
 if (opts['dry-run'] && !cleanupMode) {
   const invoke = planner === 'model' ? createPiInvoker() : null;
+  if (planner === 'model' && !resolveCapability(routing, registry, 'orchestration').candidates.length) throw new Error(`No bound model for orchestration; edit ${piUserModelsPath()}`);
   const dry = await dryRun(request, { planner, agents, routing, registry, policy, invoke, cwd: repoRoot ?? process.cwd() });
   console.log(opts.json ? JSON.stringify(dry, null, 2) : formatPlan(dry));
   process.exitCode = dry.errors.length ? 1 : 0;

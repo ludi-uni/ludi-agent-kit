@@ -18,6 +18,7 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadRouting } from '../lib/routing.mjs';
 import { loadRegistry } from '../lib/registry.mjs';
+import { piUserModelsPath } from '../adapters/pi/lib/model-registry.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { loadCatalog } from '../lib/maintenance.mjs';
 import { loadExecPolicy } from '../lib/maintenance-exec.mjs';
@@ -32,7 +33,7 @@ const adapterDir = join(kit, 'adapters', adapter);
 const outDir = join(adapterDir, 'out');
 
 const routing = loadRouting(join(kit, 'routing/routing.json'));
-const { registry } = loadRegistry(join(adapterDir, 'models.json'), join(adapterDir, 'models.local.json'), routing);
+const { registry } = loadRegistry(join(adapterDir, 'models.json'), join(adapterDir, 'models.local.json'), routing, adapter === 'pi' ? piUserModelsPath() : null);
 const { agents, errors } = loadAgents(join(kit, 'agents'), routing);
 if (errors.length) { console.error(errors.join('\n')); process.exit(1); }
 const catalog = loadCatalog(join(adapterDir, 'model-catalog.json'));

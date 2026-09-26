@@ -9,7 +9,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { loadRouting } from '../lib/routing.mjs';
-import { loadRegistry } from '../lib/registry.mjs';
+import { loadPiRegistry } from '../adapters/pi/lib/model-registry.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { loadPolicy, mergePolicy } from '../lib/orchestrator/policy.mjs';
 import { openStore } from '../lib/orchestrator/store.mjs';
@@ -37,7 +37,7 @@ const plan = [
 ];
 
 const routing = loadRouting(join(kit, 'routing/routing.json'));
-const { registry } = loadRegistry(join(kit, 'adapters/pi/models.json'), join(kit, 'adapters/pi/models.local.json'), routing);
+const { registry } = loadPiRegistry(kit, routing);
 const { agents } = loadAgents(join(kit, 'agents'), routing);
 const { policy } = loadPolicy(join(kit, 'orchestration/decision-policy.json'));
 const active = mergePolicy(policy, { decision_policy: { reassign_on_failure: false }, limits: { max_retries: 1 }, agent_runtime: { max_runtime_ms: 180000, max_tool_calls: 25, max_turns: 8 } });

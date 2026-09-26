@@ -11,6 +11,8 @@ node scripts/orchestrate.mjs --repo <dir> --apply "..."                # coder t
   [--planner rules|model] [--policy <file>] [--out <dir>] [--json] [--trace]
 ```
 
+Before starting a persistent run, the planner's capability (for `--planner model`) and every capability in the validated task plan must have at least one non-placeholder binding. Otherwise the call fails without creating a run and reports the user-level `models.local.json` path. Existing runs can still be listed/shown; resuming pending tasks checks their bindings. The check does not guarantee provider authentication, quota, or model availability. Configure `~/.pi/agent/ludi-agent-kit/models.local.json` (or `$env:PI_CODING_AGENT_DIR/ludi-agent-kit/models.local.json`) and see `adapters/pi/README.md` for migration precedence.
+
 ## Response language
 
 All agents default to **Japanese** for user-facing output (summaries, reports, decisions,

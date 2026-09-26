@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { loadRouting } from '../lib/routing.mjs';
 import { loadRegistry } from '../lib/registry.mjs';
+import { piUserModelsPath } from '../adapters/pi/lib/model-registry.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { resolveAgents, resolveCapability } from '../lib/resolve.mjs';
 
@@ -17,7 +18,7 @@ const opt = (name, def) => { const i = args.indexOf(`--${name}`); return i >= 0 
 const adapter = opt('adapter', 'pi');
 const adapterDir = join(kit, 'adapters', adapter);
 const routing = loadRouting(join(kit, 'routing/routing.json'));
-const { registry, sources } = loadRegistry(join(adapterDir, 'models.json'), join(adapterDir, 'models.local.json'), routing);
+const { registry, sources } = loadRegistry(join(adapterDir, 'models.json'), join(adapterDir, 'models.local.json'), routing, adapter === 'pi' ? piUserModelsPath() : null);
 const { agents, errors } = loadAgents(join(kit, 'agents'), routing);
 if (errors.length) { console.error(errors.join('\n')); process.exit(1); }
 
