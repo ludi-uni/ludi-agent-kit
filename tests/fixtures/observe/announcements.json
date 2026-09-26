@@ -1,0 +1,8 @@
+{
+  "$comment": "Fixture: provider announcements for the observation layer (Phase 4). Fictional ids.",
+  "announcements": [
+    { "provider": "qoder", "model": "Qwen3.8-Flash", "type": "free-campaign-ended", "asOf": "2026-03-01T00:00:00Z", "label": "Qoder pricing page", "url": "https://example.invalid/qoder-pricing" },
+    { "provider": "openai-codex", "model": "gpt-5.6-luna", "type": "price-changed", "inputPricePer1M": 0.35, "outputPricePer1M": 1.4, "asOf": "2026-03-02T00:00:00Z", "label": "provider price list", "trust": "provider_api" },
+    { "provider": "newp", "model": "Nova-1", "type": "model-added", "contextK": 512, "vision": true, "asOf": "2026-03-03T00:00:00Z", "label": "provider changelog" }
+  ]
+}

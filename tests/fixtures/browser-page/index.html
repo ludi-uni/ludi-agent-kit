@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ludi browser fixture</title>
+</head>
+<body>
+  <h1>Browser fixture</h1>
+  <label for="name">Name</label>
+  <input id="name" name="name" type="text" placeholder="type a name">
+  <button id="greet" type="button">Greet</button>
+  <p id="result" aria-live="polite"></p>
+  <script>
+    document.getElementById('greet').addEventListener('click', () => {
+      const v = document.getElementById('name').value;
+      document.getElementById('result').textContent = v ? `hello ${v}` : 'hello (empty)';
+    });
+  </script>
+</body>
+</html>

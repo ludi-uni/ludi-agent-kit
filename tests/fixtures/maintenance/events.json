@@ -1,0 +1,13 @@
+{
+  "$comment": "Fixture: the Qoder provider ends the free campaign for Qwen3.8-Flash on 2026-03-01. Used by tests/maintenance.test.mjs; ids are fictional.",
+  "version": 1,
+  "events": [
+    {
+      "type": "free-campaign-ended",
+      "provider": "qoder",
+      "model": "Qwen3.8-Flash",
+      "asOf": "2026-03-01",
+      "note": "Qoder free promotion for Qwen3.8-Flash ends; pay-as-you-go pricing applies afterwards."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "$comment": "EXAMPLE of models.local.json. Copy to models.local.json and replace with ids from `pi --list-models`; check readiness with `pi auth check --provider <p>`.",
+  "version": 1,
+  "backends": {
+    "local": { "provider": "freetoken",    "model": "Qwen3.6-35B-A3B-NVFP4", "thinking": "off" },
+    "cheap": { "provider": "openai-codex", "model": "gpt-5.6-luna",  "thinking": "low" },
+    "sol":   { "provider": "openai-codex", "model": "gpt-5.6-sol",   "thinking": "medium" },
+    "astra": { "provider": "openai-codex", "model": "gpt-6-astra",   "thinking": "medium", "vision": true },
+    "codex": { "provider": "openai-codex", "model": "gpt-5.5",       "thinking": "high" },
+    "qoder": { "provider": "qoder",        "model": "Qwen3.8-Flash", "thinking": "low",    "note": "Qoder-hosted slot; id from `pi --list-models` / qoder-models-cache.json (priceFactor 0 = free campaign)" },
+    "devin": { "provider": "devin",        "model": "swe-2-high",    "thinking": "high",   "note": "Devin-hosted slot; api devin-cloud via server.codeium.com, ids from `pi --list-models`" }
+  }
+}
+

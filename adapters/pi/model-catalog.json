@@ -1,0 +1,97 @@
+{
+  "$comment": "Model knowledge for the maintenance task (scripts/reevaluate-models.mjs). Concrete ids live here because this is the pi adapter; lib/maintenance.mjs stays neutral. Update `updatedAt` and entries from provider pricing/model docs or market snapshots (see docs/model-maintenance.md). Scores are heuristic 0-100; null = unknown (excluded from scoring, lowers confidence). status: active | free-campaign | deprecated | removed. cost in USD per 1M tokens; free:true means currently $0. postCampaignCost is the expected price when a free campaign ends. Never store credentials.",
+  "version": 1,
+  "updatedAt": "2026-09-25",
+  "models": [
+    {
+      "provider": "freetoken",
+      "model": "Qwen3.6-35B-A3B-NVFP4",
+      "status": "active",
+      "cost": { "free": true },
+      "location": "local",
+      "local": { "powerWatts": 450, "taskMinutes": 4 },
+      "contextK": 64,
+      "vision": false,
+      "toolUse": "basic",
+      "thinking": "off",
+      "scores": { "coding": 40, "reasoning": 35, "speed": 70 },
+      "notes": "Local NVFP4 quant served through the freetoken endpoint. Electricity estimate: 450W x 4min at the policy electricity price."
+    },
+    {
+      "provider": "qoder",
+      "model": "Qwen3.8-Flash",
+      "status": "free-campaign",
+      "cost": { "free": true },
+      "postCampaignCost": null,
+      "freeUntil": null,
+      "contextK": 1024,
+      "vision": false,
+      "toolUse": "good",
+      "thinking": "low",
+      "scores": { "coding": 62, "reasoning": 55, "speed": 85 },
+      "notes": "Verified 2026-09-24 via `pi --list-models` + ~/.pi/agent/qoder-models-cache.json: priceFactor 0 (free campaign), 1M context, 128K max output, reasoning+effort, image input. Qoder pricing is subscription priceFactor-based, not per-token — post-campaign per-token cost is genuinely unknown (postCampaignCost null -> costUnknown on campaign end, re-evaluated by maintenance). freeUntil not published by the provider."
+    },
+    {
+      "provider": "devin",
+      "model": "swe-2-high",
+      "status": "free-campaign",
+      "cost": { "free": true },
+      "postCampaignCost": { "usdPerMInput": 0.75, "usdPerMOutput": 3.75 },
+      "freeUntil": "2026-10-10T15:00:00Z",
+      "contextK": 256,
+      "vision": true,
+      "toolUse": "good",
+      "thinking": "high",
+      "scores": { "coding": 80, "reasoning": 75, "speed": 50 },
+      "notes": "User-reported Devin free campaign through 2026-10-10 (interpreted inclusive JST, cutoff 2026-10-11 00:00 JST; independently unverified). 2026-09-24 pi model metadata lists $0.75/$3.75 per 1M tokens as post-campaign reference, 256K context, 128K max output. Actual entitlement and billing must be checked before live usage. Scores are heuristic placeholders pending measured results; sibling variants are not assumed free."
+    },
+    {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-luna",
+      "status": "active",
+      "cost": { "usdPerMInput": 0.4, "usdPerMOutput": 1.6 },
+      "contextK": 272,
+      "vision": false,
+      "toolUse": "good",
+      "thinking": "low",
+      "scores": { "coding": 68, "reasoning": 60, "speed": 80 },
+      "notes": "Current cheap backend binding."
+    },
+    {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol",
+      "status": "active",
+      "cost": { "usdPerMInput": 1.5, "usdPerMOutput": 6.0 },
+      "contextK": 400,
+      "vision": false,
+      "toolUse": "good",
+      "thinking": "medium",
+      "scores": { "coding": 85, "reasoning": 82, "speed": 55 },
+      "notes": "Current sol backend binding."
+    },
+    {
+      "provider": "openai-codex",
+      "model": "gpt-6-astra",
+      "status": "active",
+      "cost": { "usdPerMInput": 2.5, "usdPerMOutput": 10.0 },
+      "contextK": 400,
+      "vision": true,
+      "toolUse": "good",
+      "thinking": "medium",
+      "scores": { "coding": 88, "reasoning": 90, "speed": 50 },
+      "notes": "Current astra backend binding; vision-capable."
+    },
+    {
+      "provider": "openai-codex",
+      "model": "gpt-5.5",
+      "status": "active",
+      "cost": { "usdPerMInput": 1.25, "usdPerMOutput": 5.0 },
+      "contextK": 400,
+      "vision": false,
+      "toolUse": "good",
+      "thinking": "high",
+      "scores": { "coding": 82, "reasoning": 84, "speed": 45 },
+      "notes": "Current codex backend binding."
+    }
+  ]
+}

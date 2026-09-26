@@ -1,0 +1,13 @@
+{
+  "$comment": "Backend-neutral MCP server catalog. Each entry describes a server; adapters render it into their own config format. Never store tokens; reference environment variables.",
+  "version": 1,
+  "servers": {
+    "example-http": {
+      "enabled": false,
+      "transport": "http",
+      "url": "https://example.invalid/mcp",
+      "authEnv": "EXAMPLE_MCP_TOKEN",
+      "description": "Placeholder showing the shape. Disabled by default."
+    }
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "$schema": "./routing.schema.json",
+  "version": 1,
+  "description": "Capability -> backend routing. Backends are logical names; concrete provider/model bindings live in adapters/<backend-adapter>/models.json. Agents and workflows reference capabilities only.",
+  "backends": {
+    "local": {
+      "description": "Locally hosted model (llama.cpp / vLLM / any OpenAI-compatible local endpoint). Cheapest; no external data transfer.",
+      "tier": "free",
+      "vision": false
+    },
+    "cheap": {
+      "description": "Low-cost hosted model for routine code, search summaries and context reduction.",
+      "tier": "low",
+      "vision": false
+    },
+    "sol": {
+      "description": "Strong general coding/reasoning model.",
+      "tier": "high",
+      "vision": false
+    },
+    "astra": {
+      "description": "Vision-capable reasoning model.",
+      "tier": "high",
+      "vision": true
+    },
+    "codex": {
+      "description": "Codex CLI / API backend. Treated as one backend among others, not a special case.",
+      "tier": "high",
+      "vision": false
+    },
+    "qoder": {
+      "description": "Qoder-hosted model slot (bound in the adapter to a concrete model, e.g. a Flash-class model on a free campaign). Cheap-first candidate for routine code work.",
+      "tier": "low",
+      "vision": false
+    },
+    "devin": {
+      "description": "Devin-hosted model slot (bound in the adapter to a concrete model, e.g. an SWE-class model). Strong-first candidate for nontrivial code and review.",
+      "tier": "high",
+      "vision": false
+    }
+  },
+  "capabilities": {
+    "cheap-code": {
+      "description": "Small edits, boilerplate, grep summaries, context reduction.",
+      "primary": "qoder",
+      "fallback": ["cheap", "local", "sol"]
+    },
+    "strong-code": {
+      "description": "Nontrivial implementation, debugging, multi-file changes.",
+      "primary": "devin",
+      "fallback": ["qoder", "sol", "codex", "local"]
+    },
+    "vision-reasoning": {
+      "description": "Screenshot / frame / image inspection and judgement.",
+      "primary": "astra",
+      "fallback": ["sol"],
+      "requires": { "vision": true }
+    },
+    "deep-review": {
+      "description": "Diff, architecture and regression/risk review.",
+      "primary": "devin",
+      "fallback": ["qoder", "sol"]
+    },
+    "browser": {
+      "description": "Local browser automation through the agent-browser CLI. The model decides snapshot/action steps; execution is a plain shell command, so a strong reasoning model is preferred over a vision one.",
+      "primary": "sol",
+      "fallback": ["codex"]
+    },
+    "orchestration": {
+      "description": "Planning and decomposition for the optional model planner (the default rules planner needs no model). Try the free-campaign Qoder slot first; fall back to the strong Devin slot and then hosted models.",
+      "primary": "qoder",
+      "fallback": ["devin", "sol", "codex"]
+    }
+  },
+  "escalation": {
+    "description": "Ordered escalation ladder. A task that fails or is judged too hard on one capability may be retried on the next. Not implemented as a runtime yet.",
+    "ladders": {
+      "code": ["cheap-code", "strong-code"]
+    }
+  }
+}

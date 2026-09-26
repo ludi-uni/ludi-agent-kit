@@ -1,0 +1,36 @@
+{
+  "$comment": "Phase 2 maintenance execution policy for the pi adapter. requiredQuality is the 0-100 quality bar per execution tier (free models below the bar are NOT used). costWeights blends api $/1M, local electricity $/run and a speed penalty into effectiveCostUsd. escalation rules decide when evaluate hands off to the reconfigure tier. No model names — selection reads model-catalog.json.",
+  "version": 1,
+  "requiredQuality": { "monitor": 40, "evaluate": 65, "reconfigure": 80 },
+  "costWeights": { "api": 1, "electricity": 1, "speed": 0.02 },
+  "electricityPricePerKwh": 0.30,
+  "taskProfiles": {
+    "monitor":     { "estimatedInputTokens": 8000,  "estimatedOutputTokens": 800,  "estimatedTaskMinutes": 1 },
+    "evaluate":    { "estimatedInputTokens": 20000, "estimatedOutputTokens": 3000, "estimatedTaskMinutes": 3 },
+    "reconfigure": { "estimatedInputTokens": 60000, "estimatedOutputTokens": 8000, "estimatedTaskMinutes": 8 }
+  },
+  "qualityTier": { "monitor": "low", "evaluate": "mid", "reconfigure": "high" },
+  "capabilityRequirements": {
+    "cheap-code": { "coding": 50 },
+    "strong-code": { "coding": 75, "reasoning": 65 },
+    "deep-review": { "coding": 70, "reasoning": 70 },
+    "orchestration": { "reasoning": 55 },
+    "browser": { "reasoning": 70 },
+    "vision-reasoning": { "reasoning": 80 }
+  },
+  "escalation": {
+    "minCapabilities": 2,
+    "minAgents": 3,
+    "minQualitySwing": 15,
+    "maxScoreDelta": 4,
+    "structuralEvents": ["removed", "deprecated"],
+    "escalateOnLowConfidence": true,
+    "escalateOnStructural": false,
+    "minEvaluateConfidence": 0.5
+  },
+  "budget": {
+    "maxEstimatedCostPerRunUsd": 0.05,
+    "maxPremiumInvocationsPerRun": 1,
+    "maxTotalInvocationsPerRun": 4
+  }
+}

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Visual Verification"
+  short_description: "Inspect native, motion, and A/V evidence"
+  default_prompt: "Use $visual-verification to capture and inspect native Windows, motion, or same-session A/V evidence."
+
+policy:
+  allow_implicit_invocation: true

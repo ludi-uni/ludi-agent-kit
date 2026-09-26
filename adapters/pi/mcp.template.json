@@ -1,0 +1,4 @@
+{
+  "$comment": "Template for ~/.pi/agent/mcp.json (pi-mcp-adapter format). No credentials here: use ${ENV_VAR} placeholders or the adapter's own auth store. Actual server list is composed from ../../mcp/servers.json by sync-pi.ps1.",
+  "mcpServers": {}
+}

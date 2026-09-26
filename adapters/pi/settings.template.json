@@ -1,0 +1,7 @@
+{
+  "$comment": "Template fragment. sync-pi.ps1 never writes settings.json; it only reports the diff between this fragment and the live file. Model/provider stay user-owned.",
+  "defaultTools": ["read", "powershell", "edit", "write"],
+  "enableSkillCommands": true,
+  "defaultProjectTrust": "ask",
+  "enableInstallTelemetry": false
+}

@@ -1,0 +1,5 @@
+# availability fixture: one provider/model per line (pi --list-models-like)
+openai-codex/gpt-5.6-sol
+openai-codex/gpt-6-astra
+openai-codex/gpt-5.5
+qoder/Qwen3.9-Flash

@@ -1,0 +1,39 @@
+# Generated / local
+# Local goal/session state; never distribute
+.pi/
+adapters/pi/out/
+.orchestration/
+adapters/*/models.local.json
+!adapters/*/models.local.example.json
+*.local.json
+work/
+artifacts/
+.codesearch.db/
+
+# Secrets — never tracked
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+auth.json
+config.toml
+*token*.json
+*secret*
+models-store.json
+
+# Runtime junk
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+*.log
+
+# Captured media / evidence
+*.mp4
+*.wav
+*.png
+*.jpg
+*.jpeg

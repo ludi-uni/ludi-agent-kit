@@ -1,0 +1,66 @@
+{
+  "$comment": "Orchestrator decision policy and loop limits (lib/orchestrator/policy.mjs). Overlaid by decision-policy.local.json (gitignored) or --policy <file>. escalation.<flag>=true means decisions carrying that flag always go to the user; everything else is decided by the orchestrator when reversible, low-risk, policy-resolvable or settleable by a small experiment.",
+  "version": 1,
+  "decision_policy": {
+    "prefer_maintainability": true,
+    "prefer_existing_assets": true,
+    "prefer_reversible_actions": true,
+    "max_parallel_tasks": 3,
+    "poc": { "prefer_if_estimated_hours_lte": 2 },
+    "escalation": {
+      "external_publish": true,
+      "destructive_action": true,
+      "production_risk": true,
+      "high_cost": true,
+      "project_cancellation": true,
+      "major_direction_change": true,
+      "user_value_judgement": true
+    },
+    "escalation_keywords": {
+      "external_publish": ["publish", "release to", "push to remote", "send email", "post to", "公開", "外部送信"],
+      "destructive_action": ["delete data", "drop table", "drop database", "rm -rf", "force push", "wipe", "データ削除", "不可逆"],
+      "production_risk": ["deploy to production", "production database", "production environment", "prod deploy", "本番環境", "本番デプロイ"],
+      "high_cost": ["purchase", "paid plan", "billing", "購入", "課金"],
+      "project_cancellation": ["cancel the project", "abandon the project", "プロジェクト中止"]
+    },
+    "high_cost_threshold_usd": 50,
+    "major_direction_change_weeks": 2,
+    "default_behavior": {
+      "reversible_decision": "auto",
+      "low_risk_decision": "auto"
+    },
+    "reassign_on_failure": true
+  },
+  "limits": {
+    "max_tasks": 12,
+    "max_retries": 2,
+    "max_rounds": 12,
+    "max_rework_cycles": 1,
+    "model_attempts_per_task": 3,
+    "max_total_attempts_per_task": 4
+  },
+  "backend_health": {
+    "usage_exhausted_ttl_hours": 6,
+    "rate_limited_ttl_minutes": 15,
+    "unavailable_ttl_minutes": 10
+  },
+  "verification": {
+    "require_tester": true,
+    "require_reviewer": true
+  },
+  "agent_runtime": {
+    "max_runtime_ms": 600000,
+    "max_tool_calls": 40,
+    "max_turns": 12,
+    "turn_budgets": {
+      "default":  { "simple": 12, "normal": 16, "heavy": 20, "repo-history-heavy": 24 },
+      "scout":    { "simple": 12, "normal": 16, "heavy": 20, "repo-history-heavy": 24 },
+      "coder":    { "simple": 16, "normal": 20, "heavy": 24, "repo-history-heavy": 24 },
+      "tester":   { "simple": 12, "normal": 16, "heavy": 20, "repo-history-heavy": 20 },
+      "reviewer": { "simple": 12, "normal": 16, "heavy": 20, "repo-history-heavy": 20 }
+    },
+    "extension_turns": 8,
+    "max_extensions": 2,
+    "absolute_max_turns": 32
+  }
+}

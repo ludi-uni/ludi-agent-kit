@@ -1,0 +1,74 @@
+{
+  "$comment": "Fixture catalog for the Qoder/Qwen3.8-Flash scenario. Ids are fictional test data.",
+  "version": 1,
+  "updatedAt": "2026-03-02",
+  "models": [
+    {
+      "provider": "qoder",
+      "model": "Qwen3.8-Flash",
+      "status": "free-campaign",
+      "cost": { "free": true },
+      "postCampaignCost": { "usdPerMInput": 0.3, "usdPerMOutput": 1.2, "free": false },
+      "contextK": 256,
+      "vision": false,
+      "toolUse": "good",
+      "thinking": "low",
+      "scores": { "coding": 62, "reasoning": 55, "speed": 85 }
+    },
+    {
+      "provider": "qoder",
+      "model": "Qwen3.9-Flash",
+      "status": "active",
+      "cost": { "usdPerMInput": 0.25, "usdPerMOutput": 1.0 },
+      "contextK": 256,
+      "vision": false,
+      "toolUse": "good",
+      "thinking": "low",
+      "scores": { "coding": 70, "reasoning": 62, "speed": 85 }
+    },
+    {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-luna",
+      "status": "active",
+      "cost": { "usdPerMInput": 0.4, "usdPerMOutput": 1.6 },
+      "contextK": 272,
+      "vision": false,
+      "toolUse": "good",
+      "thinking": "low",
+      "scores": { "coding": 68, "reasoning": 60, "speed": 80 }
+    },
+    {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol",
+      "status": "active",
+      "cost": { "usdPerMInput": 1.5, "usdPerMOutput": 6.0 },
+      "contextK": 400,
+      "vision": false,
+      "toolUse": "good",
+      "thinking": "medium",
+      "scores": { "coding": 85, "reasoning": 82, "speed": 55 }
+    },
+    {
+      "provider": "openai-codex",
+      "model": "gpt-6-astra",
+      "status": "active",
+      "cost": { "usdPerMInput": 2.5, "usdPerMOutput": 10.0 },
+      "contextK": 400,
+      "vision": true,
+      "toolUse": "good",
+      "thinking": "medium",
+      "scores": { "coding": 88, "reasoning": 90, "speed": 50 }
+    },
+    {
+      "provider": "openai-codex",
+      "model": "gpt-5.5",
+      "status": "active",
+      "cost": { "usdPerMInput": 1.25, "usdPerMOutput": 5.0 },
+      "contextK": 400,
+      "vision": false,
+      "toolUse": "good",
+      "thinking": "high",
+      "scores": { "coding": 82, "reasoning": 84, "speed": 45 }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ludi-agent-kit/context-pack.schema.json",
+  "title": "ludi-agent-kit Context Pack v1",
+  "type": "object",
+  "required": ["task", "goal", "constraints", "relevant_files", "expected_output"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "capability": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "produced_by": { "type": "string" },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "max_tokens": { "type": "integer", "minimum": 1 } }
+    },
+    "discovery": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["found", "partial", "none"] },
+        "note": { "type": "string" }
+      },
+      "description": "Optional. status=none permits an empty relevant_files (greenfield/new-module tasks)."
+    },
+    "task": { "type": "string", "minLength": 1 },
+    "goal": { "type": "string", "minLength": 1 },
+    "constraints": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "relevant_files": {
+      "type": "array",
+      "description": "minItems 1 unless discovery.status is none (enforced by the validator via the if/then below).",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string" },
+          "lines": { "type": "string", "pattern": "^[0-9]+-[0-9]+$" },
+          "create": { "type": "boolean", "description": "File does not exist yet; the coder may create it." }
+        }
+      }
+    },
+    "relevant_snippets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "content"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "lines": { "type": "string", "pattern": "^[0-9]+-[0-9]+$" },
+          "language": { "type": "string" },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "repo_rules": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "observed_errors": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "test_commands": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "previous_attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["summary"],
+        "additionalProperties": false,
+        "properties": {
+          "summary": { "type": "string", "minLength": 1 },
+          "outcome": { "type": "string" }
+        }
+      }
+    },
+    "expected_output": { "type": "string", "minLength": 1 }
+  },
+  "if": { "properties": { "discovery": { "properties": { "status": { "const": "none" } }, "required": ["status"] } }, "required": ["discovery"] },
+  "then": {},
+  "else": { "properties": { "relevant_files": { "minItems": 1 } } }
+}

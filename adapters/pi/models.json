@@ -1,0 +1,13 @@
+{
+  "$comment": "Shared TEMPLATE binding of logical routing backends to pi provider/model ids. Real per-machine bindings go in models.local.json (gitignored) and override these per backend. TODO-* values are placeholders that the resolver skips. Allowed binding keys: provider, model, thinking, vision, note. Never store credentials here.",
+  "version": 1,
+  "backends": {
+    "local":  { "provider": "TODO-provider", "model": "TODO-local-model",  "thinking": "off",    "note": "OpenAI-compatible local endpoint declared in ~/.pi/agent/models.json" },
+    "cheap":  { "provider": "TODO-provider", "model": "TODO-cheap-model",  "thinking": "low" },
+    "sol":    { "provider": "TODO-provider", "model": "TODO-sol-model",    "thinking": "high" },
+    "astra":  { "provider": "TODO-provider", "model": "TODO-astra-model",  "thinking": "medium", "vision": true },
+    "codex":  { "provider": "TODO-provider", "model": "TODO-codex-model",  "thinking": "high",   "note": "Codex as a pi provider; or use pi-subagents codex-exec adapter instead" },
+    "qoder":  { "provider": "TODO-provider", "model": "TODO-qoder-model",  "thinking": "low",    "note": "Qoder-hosted model slot; bind in models.local.json from `pi --list-models`" },
+    "devin":  { "provider": "TODO-provider", "model": "TODO-devin-model",  "thinking": "high",   "note": "Devin-hosted model slot; bind in models.local.json from `pi --list-models`" }
+  }
+}
