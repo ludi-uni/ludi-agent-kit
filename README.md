@@ -48,7 +48,19 @@ install path lives under `adapters/<backend>/`.** `rules/`, `skills/`, `agents/`
   and prints a plan. `-Apply` only creates Junctions and a generated `AGENTS.md`, backs
   up conflicts, and never touches `settings.json`, `auth.json`, `models.json`, `mcp.json`.
 
-## Quick start
+## Install as an npm / Pi package
+
+The published package is `@ludi-uni/ludi-agent-kit` (initial release `0.1.0`). For Pi, install it directly with `pi install npm:@ludi-uni/ludi-agent-kit`; alternatively use `pi install git:github.com/ludi-uni/ludi-agent-kit` to install from this repository. A Pi install loads the `pi-workflow`, `project-management` and `visual-verification` skills plus the loop guard and `ludi_orchestrate` extensions. Review the package source before enabling extensions: they run with your Pi process permissions. The `shell-gate` extension is **not** loaded globally; it is used only by the kit's tool-capable child path. No postinstall script modifies Pi settings, model bindings or credentials.
+
+```powershell
+pi install npm:@ludi-uni/ludi-agent-kit
+pi list
+# In Pi, check /skill:pi-workflow and the ludi_orchestrate tool.
+```
+
+`npm install @ludi-uni/ludi-agent-kit` alone only places the files in `node_modules`; Pi resource discovery requires `pi install` (or an explicitly configured local package). Pi does not automatically install the separate `pi-subagents` extension or register `agents/*.md` as pi-subagents roles. To use those roles, install/configure pi-subagents separately and explicitly configure agents/model bindings; see [the pi adapter](adapters/pi/README.md). The bundled `adapters/pi/sync-pi.ps1` is an **alternative** for a source checkout, not a post-install step: do not use `-Apply` on top of the same installed Pi package without checking for duplicate extensions and skills.
+
+## Quick start from a source checkout
 
 ```powershell
 node scripts/validate.mjs                       # routing, agents, skills, MCP catalog, context packs
@@ -60,7 +72,7 @@ node scripts/context-pack.mjs context-pack/examples/example-fix.md --json
 node scripts/resolve-capabilities.mjs routing/routing.json adapters/pi/models.json
 ```
 
-Requirements for local validation: Windows, PowerShell 7, Git and Node.js with `node:sqlite` support (tested with Node 24). Core scripts use Node built-ins and need no `npm install`. Live agent runs additionally require an installed, authenticated pi runtime, available model IDs and quota; model bindings in `adapters/pi/models.json` are templates, not working credentials. Optional integrations have separate prerequisites; see [OSS and dependencies](docs/third-party.md).
+Requirements for local validation: Windows, PowerShell 7, Git and Node.js with `node:sqlite` support (tested with Node 24). Core scripts use Node built-ins without a separate `npm install`; the Pi extensions import `typebox` supplied by a compatible Pi runtime (declared as a peer dependency). Live agent runs additionally require an installed, authenticated pi runtime, available model IDs and quota; model bindings in `adapters/pi/models.json` are templates, not working credentials. Optional integrations have separate prerequisites; see [OSS and dependencies](docs/third-party.md).
 
 ## Executable path (Phase 2)
 
@@ -82,7 +94,7 @@ never the same modelId twice, failures appended to `previous_attempts`. See `doc
 
 ## Distribution checklist
 
-- Review the files being published (`git status --short`, then the staged file list); this repository may start without a commit. Do not publish machine-local model bindings, auth, session/goal state, generated `adapters/pi/out/` traces or captured media. `.gitignore` excludes `.pi/`, local bindings and common secret/output patterns, but is not a substitute for inspecting staged files.
+- Review the files being published (`git status --short`, then the staged file list); for npm inspect `npm pack --dry-run --json` as well. Do not publish machine-local model bindings, auth, session/goal state, generated `adapters/pi/out/` traces or captured media. `.gitignore` excludes `.pi/`, local bindings and common secret/output patterns, but is not a substitute for inspecting staged files.
 - Run `node scripts/validate.mjs`, `node --test tests/` and, on Windows with PowerShell 7, `pwsh -NoProfile -File tests/test-sync-pi.ps1`. Some tests/integrations depend on installed tools; report skipped or failing checks rather than claiming a clean release.
 - Preserve `LICENSE` and review [OSS and dependencies](docs/third-party.md) if bundling third-party tools or their output. This repository does not vendor those tools.
 

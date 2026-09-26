@@ -1,0 +1,56 @@
+{
+  "name": "@ludi-uni/ludi-agent-kit",
+  "version": "0.1.0",
+  "description": "Windows-first, backend-neutral agent kit with Pi skills and extensions",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ludi-uni/ludi-agent-kit.git"
+  },
+  "homepage": "https://github.com/ludi-uni/ludi-agent-kit#readme",
+  "bugs": "https://github.com/ludi-uni/ludi-agent-kit/issues",
+  "keywords": ["pi-package", "pi", "agent-skills", "coding-agent", "windows"],
+  "engines": { "node": ">=22.19.0" },
+  "peerDependencies": { "typebox": "*" },
+  "publishConfig": { "access": "public" },
+  "files": [
+    "AGENTS.md",
+    "adapters/codex/",
+    "adapters/pi/README.md",
+    "adapters/pi/browser/",
+    "adapters/pi/lib/",
+    "adapters/pi/loop-guard/",
+    "adapters/pi/orchestrator-ext/",
+    "adapters/pi/shell-gate/",
+    "adapters/pi/maintenance-policy.json",
+    "adapters/pi/mcp.template.json",
+    "adapters/pi/model-catalog.json",
+    "adapters/pi/models.json",
+    "adapters/pi/models.local.example.json",
+    "adapters/pi/settings.template.json",
+    "adapters/pi/sync-pi.ps1",
+    "agents/",
+    "context-pack/",
+    "docs/",
+    "lib/",
+    "mcp/",
+    "orchestration/",
+    "routing/",
+    "rules/",
+    "scripts/",
+    "skills/",
+    "tests/"
+  ],
+  "pi": {
+    "extensions": [
+      "./adapters/pi/loop-guard/index.js",
+      "./adapters/pi/orchestrator-ext/index.js"
+    ],
+    "skills": [
+      "./skills/pi-workflow",
+      "./skills/project-management",
+      "./skills/visual-verification"
+    ]
+  }
+}
