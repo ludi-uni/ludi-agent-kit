@@ -138,6 +138,12 @@ stay on the run that saw them. There is no permanent blacklist.
 
 pi loads `adapters/pi/orchestrator-ext` as `extensions/ludi-orchestrator` (`/orchestrate`, tool
 `ludi_orchestrate`). The programmatic boundary is `lib/orchestrator/api.mjs`.
+During start/resume/answer, the orchestrator reports start, plan, dispatched tasks,
+individual child arrivals, evaluated task status, and final status. The pi tool streams
+these as live updates; `/orchestrate` uses UI notifications; the CLI writes progress to
+stderr (keeping `--json` stdout parseable). The final integrated report remains unchanged.
+Callers of `startOrchestration` / `resumeOrchestration` can supply `onProgress(message)`;
+observer errors never interrupt execution.
 
 ## Tool-capable children (Phase 3)
 

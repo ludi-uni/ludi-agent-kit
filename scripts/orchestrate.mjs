@@ -119,9 +119,10 @@ if (opts['dry-run'] && !cleanupMode) {
       const health = createRunHealth(ctx);
       const invoke = createPiInvoker();
       const runner = createRunRunner(ctx, { invoke, runSubagent: createPiSubagentRunner(), repoRoot, outDir, apply: !!opts.apply, health });
+      const onProgress = message => console.error(message);
       const result = opts.resume
-        ? await resumeOrchestration(ctx, { runId: opts.resume, answers: opts.answers, repoRoot, runner, invoke, health })
-        : await startOrchestration(ctx, { request, repoRoot, planner, runner, invoke, health });
+        ? await resumeOrchestration(ctx, { runId: opts.resume, answers: opts.answers, repoRoot, runner, invoke, health, onProgress })
+        : await startOrchestration(ctx, { request, repoRoot, planner, runner, invoke, health, onProgress });
       mkdirSync(outDir, { recursive: true });
       const traceFile = join(outDir, 'orchestration-trace.json');
       writeFileSync(traceFile, JSON.stringify(result, null, 2));

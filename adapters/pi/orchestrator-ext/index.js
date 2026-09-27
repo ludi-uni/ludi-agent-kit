@@ -38,7 +38,7 @@ function text(body) {
 export default function orchestratorExtension(pi) {
   // The pi session id is AUTHORITATIVE for clientContext kind 'pi-web'. A caller
   // may not claim a different session — mismatch is rejected before any run starts.
-  const run = async (action, params, executionCtx = null) => {
+  const run = async (action, params, executionCtx = null, onProgress = null) => {
     const root = kitPath();
     const im = await _importsFn();
     const { loadOrchestrationContext, listOrchestrationRuns, showRun, formatReport, formatRunList, defaultStorePath, pendingDecisions, createRunHealth, createRunRunner, startOrchestration, resumeOrchestration, answerOrchestration, parseOlderThan, pruneOrchestrationRuns, deleteOrchestrationRun, clearOrchestrationRuns, previewRunCleanup, formatCleanup } = im.api;
@@ -94,14 +94,14 @@ export default function orchestratorExtension(pi) {
       const runner = createRunRunner(ctx, { invoke, runSubagent: createPiSubagentRunner(), repoRoot: params.repo || null, apply: false, health });
       if (action === 'answer') {
         answerOrchestration(ctx, { runId: params.runId, decisionId: params.decisionId, answer: params.answer });
-        const result = await resumeOrchestration(ctx, { runId: params.runId, repoRoot: params.repo || null, runner, invoke, health });
+        const result = await resumeOrchestration(ctx, { runId: params.runId, repoRoot: params.repo || null, runner, invoke, health, onProgress });
         return formatReport(result);
       }
       if (action === 'resume') {
-        const result = await resumeOrchestration(ctx, { runId: params.runId, repoRoot: params.repo || null, runner, invoke, health });
+        const result = await resumeOrchestration(ctx, { runId: params.runId, repoRoot: params.repo || null, runner, invoke, health, onProgress });
         return formatReport(result);
       }
-      const result = await startOrchestration(ctx, { request: params.request, repoRoot: params.repo || null, runner, invoke, health });
+      const result = await startOrchestration(ctx, { request: params.request, repoRoot: params.repo || null, runner, invoke, health, onProgress });
       return formatReport(result);
     } finally {
       ctx.session.close();
@@ -113,7 +113,7 @@ export default function orchestratorExtension(pi) {
     handler: async (args, ctx) => {
       const { action, params } = parseOrchestrateCommand(args);
       try {
-        const body = await run(action, params, ctx);
+        const body = await run(action, params, ctx, message => ctx.ui.notify(message, 'info'));
         ctx.ui.notify(body.slice(0, 500), 'info');
       } catch (e) { ctx.ui.notify(`orchestration error: ${e.message}`, 'error'); }
     },
@@ -142,8 +142,12 @@ export default function orchestratorExtension(pi) {
       store: Type.Optional(Type.String({ description: 'Override path to the orchestration sqlite file' })),
       clientContext: Type.Optional(Type.Object({ kind: Type.String(), sessionId: Type.Optional(Type.String()) }, { description: 'Client binding request; pi-web session UUID is obtained from the current pi session' })),
     }),
-    async execute(_id, params, _signal, _onUpdate, ctx) {
-      try { return text(await run(params.action || 'list', params, ctx)); }
+    async execute(_id, params, _signal, onUpdate, ctx) {
+      const updates = [];
+      try { return text(await run(params.action || 'list', params, ctx, message => {
+        updates.push(message);
+        onUpdate?.(text(updates.slice(-12).join('\n')));
+      })); }
       catch (e) { return text(`orchestration error: ${e.message}`); }
     },
   });

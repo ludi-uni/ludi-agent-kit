@@ -84,6 +84,34 @@ test('parallel runnable tasks: independent tasks share a round; the join waits f
   assert.equal(r.status, 'completed');
 });
 
+test('progress reports start, child arrivals before parallel siblings finish, evaluation and end', async () => {
+  const messages = [];
+  let release;
+  const slow = new Promise(resolve => { release = resolve; });
+  let fastReported;
+  const reported = new Promise(resolve => { fastReported = resolve; });
+  const runner = { async run(t) { if (t.id === 'b') await slow; return completed(t); } };
+  const pending = run({ plan: [spec('a', 'scout'), spec('b', 'reviewer')], runner, onProgress(message) {
+    messages.push(message);
+    if (message.includes('報告受信: [a]')) fastReported();
+  } });
+  try {
+    await reported;
+    assert.match(messages[0], /^開始:/);
+    assert.ok(messages.some(m => m.includes('実行中:')));
+    assert.ok(!messages.some(m => m.includes('報告受信: [b]')));
+  } finally { release(); }
+  const result = await pending;
+  assert.equal(result.status, 'completed');
+  assert.ok(messages.some(m => m.includes('評価: [a] completed')));
+  assert.match(messages.at(-1), /^終了: completed/);
+});
+
+test('progress observer errors do not abort orchestration', async () => {
+  const result = await run({ plan: [spec('a', 'scout')], runner: fakeRunner(t => completed(t)), onProgress() { throw new Error('UI closed'); } });
+  assert.equal(result.status, 'completed');
+});
+
 test('max concurrency: never more than max_parallel_tasks agents in flight', async () => {
   let inFlight = 0, peak = 0;
   const runner = { async run(t) { inFlight++; peak = Math.max(peak, inFlight); await new Promise(r => setTimeout(r, 5)); inFlight--; return completed(t); } };
