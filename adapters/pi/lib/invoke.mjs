@@ -7,7 +7,8 @@
 // locate the package's JS entry next to pi.cmd (<npm dir>/node_modules/@earendil-works/pi-coding-agent) and
 // run it with the current node binary without a shell.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
 
 export function locatePiEntry(env = process.env) {
@@ -27,18 +28,27 @@ export function locatePiEntry(env = process.env) {
   return null;
 }
 
-export function createPiInvoker({ piEntry = locatePiEntry(), timeoutMs = 240000, env = process.env } = {}) {
+export function createPiInvoker({ piEntry = locatePiEntry(), timeoutMs = 240000, env = process.env, spawnImpl = spawnSync } = {}) {
   if (!piEntry) throw new Error('pi CLI entry not found on PATH; set LUDI_PI_ENTRY to <pi-coding-agent>/dist/... cli.js');
   return async function invoke({ modelId, systemPrompt, prompt, cwd }) {
-    const args = [piEntry, '-p', '--model', modelId, '--no-tools', '--no-session', '--no-approve', '--system-prompt', systemPrompt, '--', prompt];
-    const started = Date.now();
-    const r = spawnSync(process.execPath, args, { cwd, encoding: 'utf8', timeout: timeoutMs, windowsHide: true, env: { ...env, PI_SKIP_VERSION_CHECK: '1' }, maxBuffer: 16 * 1024 * 1024 });
-    const durationMs = Date.now() - started;
-    if (r.error) return { ok: false, error: r.error.message, durationMs };
-    if (r.status !== 0) return { ok: false, error: `pi exited ${r.status}: ${(r.stderr || r.stdout || '').slice(-800)}`, durationMs };
-    const text = (r.stdout ?? '').trim();
-    if (!text) return { ok: false, error: 'empty model response', durationMs };
-    return { ok: true, text, durationMs };
+    // A full task brief plus a repository survey exceeds Windows' command-line
+    // length limit. Pi expands @file arguments; keep the prompt out of argv.
+    const dir = mkdtempSync(join(tmpdir(), 'ludi-invoke-'));
+    try {
+      const promptPath = join(dir, 'prompt.md');
+      writeFileSync(promptPath, prompt ?? '');
+      const args = [piEntry, '-p', '--model', modelId, '--no-tools', '--no-session', '--no-approve', '--system-prompt', systemPrompt, '--', `@${promptPath}`];
+      const started = Date.now();
+      const r = spawnImpl(process.execPath, args, { cwd, encoding: 'utf8', timeout: timeoutMs, windowsHide: true, env: { ...env, PI_SKIP_VERSION_CHECK: '1' }, maxBuffer: 16 * 1024 * 1024 });
+      const durationMs = Date.now() - started;
+      if (r.error) return { ok: false, error: r.error.message, durationMs };
+      if (r.status !== 0) return { ok: false, error: `pi exited ${r.status}: ${(r.stderr || r.stdout || '').slice(-800)}`, durationMs };
+      const text = (r.stdout ?? '').trim();
+      if (!text) return { ok: false, error: 'empty model response', durationMs };
+      return { ok: true, text, durationMs };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   };
 }
 

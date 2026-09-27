@@ -162,6 +162,45 @@ test('waiting_for_user, answer, resume, and duplicate answer are idempotent', as
   next.close();
 });
 
+test('string decision from an agent becomes a pending question instead of aborting SQLite persistence', async () => {
+  const session = openStore(dbPath());
+  try {
+    const question = 'Which repository should be inspected?';
+    const r = await orchestrate({ request: 'investigate', plan: [spec('a', 'scout')], agents, routing, registry: REG, policy: DEFAULT_POLICY, session,
+      runner: { async run() { return blocked([question]); } } });
+    assert.equal(r.status, 'needs-user');
+    assert.equal(r.runStatus, 'waiting_for_user');
+    assert.equal(r.tasks[0].status, 'waiting_for_user');
+    assert.equal(r.escalations[0].question, question);
+    assert.equal(session.getDecision(r.escalations[0].id).question, question);
+  } finally { session.close(); }
+});
+
+test('invalid decision request fails only its task, without aborting the run', async () => {
+  const session = openStore(dbPath());
+  try {
+    const r = await orchestrate({ request: 'investigate', plan: [spec('a', 'scout')], agents, routing, registry: REG, policy: DEFAULT_POLICY, session,
+      runner: { async run() { return blocked([{}]); } } });
+    assert.equal(r.status, 'incomplete');
+    assert.equal(r.tasks[0].status, 'failed');
+    assert.match(r.tasks[0].blockedReason, /missing question/);
+    assert.equal(session.getRun(r.runId).status, 'failed');
+  } finally { session.close(); }
+});
+
+test('malformed decision options fail the task instead of throwing during policy evaluation', async () => {
+  for (const decision of [{ question: 'Choose?', options: 42 }, { question: 'Choose?', options: [null] }, { question: 'Choose?', flags: 'destructive_action' }]) {
+    const session = openStore(dbPath());
+    try {
+      const r = await orchestrate({ request: 'investigate', plan: [spec('a', 'scout')], agents, routing, registry: REG, policy: DEFAULT_POLICY, session,
+        runner: { async run() { return blocked([decision]); } } });
+      assert.equal(r.tasks[0].status, 'failed');
+      assert.match(r.tasks[0].blockedReason, /malformed options or flags/);
+      assert.equal(session.getRun(r.runId).status, 'failed');
+    } finally { session.close(); }
+  }
+});
+
 test('natural-language option answers are remembered; ambiguous answers remain pending', async () => {
   const session = openStore(dbPath());
   try {
