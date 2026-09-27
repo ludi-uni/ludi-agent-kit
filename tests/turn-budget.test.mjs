@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyTaskComplexity, initialTurnBudget, progressScore, isNoProgressTimeout, COMPLEXITIES } from '../lib/orchestrator/turn-budget.mjs';
 import { shouldMarkTaskGlobalFailure, isProtocolFailure, FAILURE_CLASSES } from '../lib/orchestrator/failures.mjs';
+import { loadPolicy } from '../lib/orchestrator/policy.mjs';
 import { inspectPiEvents } from '../adapters/pi/lib/subagent.mjs';
 import { planRules } from '../lib/orchestrator/planner.mjs';
 import { loadRouting } from '../lib/routing.mjs';
@@ -16,6 +17,14 @@ const routing = loadRouting(join(kit, 'routing/routing.json'));
 const { agents } = loadAgents(join(kit, 'agents'), routing);
 const RT = { max_turns: 12, extension_turns: 8, max_extensions: 2, absolute_max_turns: 32,
   turn_budgets: { default: { simple: 12, normal: 16, heavy: 20, 'repo-history-heavy': 24 }, scout: { simple: 12, normal: 16, heavy: 20, 'repo-history-heavy': 24 }, coder: { simple: 16, normal: 20, heavy: 24, 'repo-history-heavy': 24 } } };
+
+test('default runtime leaves room for bounded tool and turn extensions', () => {
+  const { agent_runtime: runtime } = loadPolicy(join(kit, 'orchestration/decision-policy.json')).policy;
+  assert.equal(runtime.max_runtime_ms, 1200000);
+  assert.equal(runtime.absolute_max_turns, 48);
+  assert.equal(runtime.max_extensions, 3);
+  assert.equal(runtime.absolute_max_tool_calls, 80);
+});
 
 // ---------- complexity classification ----------
 test('complexity: simple/normal/heavy/repo-history-heavy', () => {

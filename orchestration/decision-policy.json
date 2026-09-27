@@ -49,8 +49,11 @@
     "require_reviewer": true
   },
   "agent_runtime": {
-    "max_runtime_ms": 600000,
+    "max_runtime_ms": 1200000,
     "max_tool_calls": 40,
+    "extension_tool_calls": 20,
+    "max_tool_extensions": 2,
+    "absolute_max_tool_calls": 80,
     "max_turns": 12,
     "turn_budgets": {
       "default":  { "simple": 12, "normal": 16, "heavy": 20, "repo-history-heavy": 24 },
@@ -60,7 +63,7 @@
       "reviewer": { "simple": 12, "normal": 16, "heavy": 20, "repo-history-heavy": 20 }
     },
     "extension_turns": 8,
-    "max_extensions": 2,
-    "absolute_max_turns": 32
+    "max_extensions": 3,
+    "absolute_max_turns": 48
   }
 }

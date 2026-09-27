@@ -118,7 +118,7 @@ if (opts['dry-run'] && !cleanupMode) {
     } else {
       const health = createRunHealth(ctx);
       const invoke = createPiInvoker();
-      const runner = createRunRunner(ctx, { invoke, runSubagent: createPiSubagentRunner(), repoRoot, outDir, apply: !!opts.apply, health });
+      const runner = createRunRunner(ctx, { invoke, runSubagent: createPiSubagentRunner(), repoRoot, outDir, apply: !!opts.apply, health, runId: opts.resume ?? null });
       const onProgress = message => console.error(message);
       const result = opts.resume
         ? await resumeOrchestration(ctx, { runId: opts.resume, answers: opts.answers, repoRoot, runner, invoke, health, onProgress })

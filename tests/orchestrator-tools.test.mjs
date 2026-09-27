@@ -19,6 +19,7 @@ import { evaluateResult } from '../lib/orchestrator/evaluator.mjs';
 import { buildTaskContract } from '../lib/orchestrator/contract.mjs';
 import { orchestrate, dryRun } from '../lib/orchestrator/orchestrator.mjs';
 import { openStore } from '../lib/orchestrator/store.mjs';
+import { createRunRunner } from '../lib/orchestrator/api.mjs';
 import { inspectPiEvents, runPiSubagent } from '../adapters/pi/lib/subagent.mjs';
 import { createScriptedInvoker } from '../adapters/pi/lib/invoke.mjs';
 
@@ -67,6 +68,26 @@ test('runner selects subagent, falls back to oneshot, and keeps pipeline for --a
   const one = createAgentRunner({ invoke: createScriptedInvoker({ '*': json(done) }), agents, routing, registry: REG });
   const oneResult = await one.run({ id: 'a', title: 't', goal: 'g', capability: 'cheap-code', assignedAgent: 'scout', acceptance: ['done'], dependencies: [], outputs: [] }, { dependencyResults: [] });
   assert.equal(oneResult.executor, 'oneshot');
+});
+
+test('resumed runner uses the stored policy for both invocation and runtime budgets', async () => {
+  const session = openStore(join(mkdtempSync(join(tmpdir(), 'ludi-policy-')), 'state.db'));
+  try {
+    const stored = mergePolicy(DEFAULT_POLICY, { agent_runtime: { max_tool_calls: 57, max_runtime_ms: 900000 },
+      limits: { model_attempts_per_task: 1, max_total_attempts_per_task: 1 } });
+    const current = mergePolicy(DEFAULT_POLICY, { agent_runtime: { max_tool_calls: 3, max_runtime_ms: 30000 },
+      limits: { model_attempts_per_task: 3, max_total_attempts_per_task: 3 } });
+    const runId = session.createRun({ request: 'old', policy: stored });
+    const seen = [];
+    const ctx = { session, policy: current, agents, routing, registry: REG };
+    const runSubagent = async req => { seen.push(req.limits); return { ok: true, text: json(done), child: { toolCalls: 1 } }; };
+    const task = { id: 'a', title: 't', goal: 'g', capability: 'cheap-code', assignedAgent: 'scout', acceptance: ['done'], dependencies: [], outputs: [] };
+    await createRunRunner(ctx, { invoke: async () => { throw new Error('oneshot used'); }, runSubagent, runId }).run(task, { dependencyResults: [] });
+    await createRunRunner(ctx, { invoke: async () => { throw new Error('oneshot used'); }, runSubagent }).run(task, { dependencyResults: [] });
+    assert.equal(seen[0].max_tool_calls, 57);
+    assert.equal(seen[0].max_runtime_ms, 900000);
+    assert.equal(seen[1].max_tool_calls, 3);
+  } finally { session.close(); }
 });
 
 test('structured result accepts needs_decision and tolerates malformed text', () => {

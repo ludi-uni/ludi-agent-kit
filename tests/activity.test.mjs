@@ -11,6 +11,7 @@ import { PassThrough } from 'node:stream';
 import { loadRouting } from '../lib/routing.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { DEFAULT_POLICY } from '../lib/orchestrator/policy.mjs';
+import { showRun } from '../lib/orchestrator/api.mjs';
 import { openStore } from '../lib/orchestrator/store.mjs';
 import { orchestrate } from '../lib/orchestrator/orchestrator.mjs';
 import { createAgentRunner } from '../lib/orchestrator/runner.mjs';
@@ -89,6 +90,12 @@ test('orchestrator still completes and persists when its optional snapshot is lo
       policy: DEFAULT_POLICY, runner: { run: async task => completed(task) }, session, activity, repoRoot: dir });
     assert.equal(result.status, 'completed');
     assert.equal(session.getRun(result.runId).status, 'completed');
+    const report = showRun({ session }, result.runId).report;
+    assert.equal(report, result.report);
+    assert.match(report, /完了:/);
+    assert.match(report, /未解決:/);
+    session.updateRun(result.runId, { status: 'running' });
+    assert.equal(showRun({ session }, result.runId).report, null, 'a resumed run must not show its previous final report');
   } finally { console.warn = originalWarn; session.close(); }
 });
 
@@ -131,7 +138,8 @@ test('orchestrate emits significant invocation events to trace but not high-freq
     ctx.onEvent?.('invocation-turn', { taskId: t.id, invocationId: 'i1', turn: 1 });
     ctx.onEvent?.('invocation-tool', { taskId: t.id, invocationId: 'i1', tool: { name: 'read', file: 'a.mjs' } });
     ctx.onEvent?.('invocation-end', { taskId: t.id, invocationId: 'i1', status: 'finished' });
-    return completed(t);
+    return { ...completed(t), raw: 'PRIVATE_RAW_OUTPUT', steps: [{ modelId: 'm', capability: 'strong-code', ok: true,
+      reason: 'PRIVATE_REASON', telemetry: { text: 'PRIVATE_TELEMETRY', commands: ['PRIVATE_COMMAND'] } }] };
   } };
   const r = await orchestrate({
     request: 'do', plan: [spec('a', 'coder')], agents, routing, registry: REG,
@@ -141,6 +149,10 @@ test('orchestrate emits significant invocation events to trace but not high-freq
   const types = session.loadTrace(r.runId).map(e => e.type);
   for (const k of ['invocation-start', 'invocation-tool', 'invocation-end']) assert.ok(types.includes(k), k);
   assert.ok(!types.includes('invocation-turn'), 'turns must not persist to trace');
+  const resultEntry = session.loadTrace(r.runId).find(e => e.type === 'result');
+  assert.equal(resultEntry.verdict, 'success');
+  assert.equal(resultEntry.steps[0].modelId, 'm');
+  assert.ok(!JSON.stringify(resultEntry).includes('PRIVATE_'), 'raw output and step telemetry must not persist');
   const doc = readActivitySnapshot(join(dir, '.orchestration', 'activity', 'clients', 'pi-web-z9.json'));
   assert.equal(doc.runId, r.runId);
   assert.equal(doc.activity.completedTasks, 1);
@@ -235,6 +247,173 @@ test('pi JSON tool/turn events propagate while child is still running', async ()
   assert.ok(observed.some(e => e.type === 'invocation-tool-completed'));
   assert.ok(observed.some(e => e.type === 'invocation-turn' && e.data.turn === 2 && e.data.toolCalls === 1));
   assert.ok(!JSON.stringify(observed).includes('HIDDEN'));
+});
+
+test('runtime tool telemetry retains only compact progress fields', async () => {
+  const secret = 'PRIVATE_PAYLOAD_'.repeat(1000);
+  const spawnImpl = () => {
+    const proc = new EventEmitter();
+    proc.stdout = new PassThrough(); proc.stderr = new PassThrough(); proc.kill = () => {};
+    setImmediate(() => {
+      const calls = [
+        { toolCallId: 'write1', toolName: 'write', args: { path: 'src/a.js', content: secret } },
+        { toolCallId: 'exec1', toolName: 'ludi_exec', args: { command: `echo ${secret}` } },
+      ];
+      for (const c of calls) {
+        proc.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [
+          { type: 'toolCall', name: c.toolName, arguments: c.args },
+        ] } }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_start', ...c }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_end', toolCallId: c.toolCallId, toolName: c.toolName, isError: false }) + '\n');
+      }
+      proc.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } }) + '\n');
+      proc.emit('close', 0);
+    });
+    return proc;
+  };
+  const result = await runPiSubagent({ modelId: 'stub/model', cwd: tmpKit(), toolNames: ['write', 'ludi_exec'], prompt: 'fixture',
+    limits: { max_turns: 10, max_tool_calls: 10 } }, { piEntry: 'fake-cli', spawnImpl });
+  assert.equal(result.ok, true);
+  assert.equal(result.telemetry.uniqueFilesInspected, 1);
+  assert.equal(result.telemetry.commands.length, 1);
+  assert.match(result.telemetry.commands[0], /^[a-f0-9]{64}$/);
+  assert.ok(!JSON.stringify(result.telemetry).includes(secret));
+});
+
+test('turn extension requires fresh successful work, not failed or stale tool calls', async () => {
+  const runTurns = async outcomes => {
+    const spawnImpl = () => {
+      const proc = new EventEmitter();
+      proc.stdout = new PassThrough(); proc.stderr = new PassThrough(); proc.kill = () => {};
+      setImmediate(() => {
+        outcomes.forEach((success, i) => {
+          const path = 'src/same.js';
+          proc.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [
+            { type: 'toolCall', name: 'edit', arguments: { path } },
+          ] } }) + '\n');
+          proc.stdout.write(JSON.stringify({ type: 'tool_execution_start', toolCallId: `t${i}`, toolName: 'edit', args: { path } }) + '\n');
+          proc.stdout.write(JSON.stringify({ type: 'tool_execution_end', toolCallId: `t${i}`, toolName: 'edit', isError: !success }) + '\n');
+        });
+        proc.emit('close', 0);
+      });
+      return proc;
+    };
+    return runPiSubagent({ modelId: 'stub/model', cwd: tmpKit(), toolNames: ['edit'], prompt: 'fixture',
+      limits: { max_turns: 2, extension_turns: 2, max_extensions: 2, absolute_max_turns: 6, max_tool_calls: 20 } },
+    { piEntry: 'fake-cli', spawnImpl });
+  };
+  const failed = await runTurns([false, false, false, false]);
+  assert.equal(failed.child.extensionsGranted, 0);
+  assert.equal(failed.child.stopReason, 'no-progress-turn-limit');
+  const stale = await runTurns([true, true, false, false, false]);
+  assert.equal(stale.child.extensionsGranted, 1);
+  assert.equal(stale.child.finalTurnLimit, 4);
+  assert.equal(stale.child.stopReason, 'no-progress-turn-limit');
+  const productive = await runTurns([true, true, true, true, true]);
+  assert.equal(productive.child.extensionsGranted, 2);
+  assert.equal(productive.child.finalTurnLimit, 6);
+});
+
+test('tool budget extends only for fresh progress and stops at the absolute ceiling', async () => {
+  const observed = [];
+  let kills = 0;
+  const spawnImpl = () => {
+    const proc = new EventEmitter();
+    proc.stdout = new PassThrough(); proc.stderr = new PassThrough(); proc.kill = () => { kills++; };
+    setImmediate(() => {
+      for (let i = 1; i <= 6; i++) {
+        proc.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [
+          { type: 'toolCall', name: 'read', arguments: { path: `src/${i}.js` } },
+        ] } }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_start', toolCallId: `r${i}`, toolName: 'read', args: { path: `src/${i}.js` } }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_end', toolCallId: `r${i}`, toolName: 'read', isError: false }) + '\n');
+      }
+      proc.emit('close', 0);
+    });
+    return proc;
+  };
+  const result = await runPiSubagent({ modelId: 'stub/model', cwd: tmpKit(), toolNames: ['read'], prompt: 'fixture',
+    limits: { max_turns: 20, max_tool_calls: 2, extension_tool_calls: 2, max_tool_extensions: 1, absolute_max_tool_calls: 4 },
+    onEvent: (type, data) => observed.push({ type, data }) }, { piEntry: 'fake-cli', spawnImpl });
+  assert.equal(result.ok, false);
+  assert.equal(result.child.stopReason, 'tool-call-limit');
+  assert.equal(result.child.finalToolLimit, 4);
+  assert.equal(result.child.toolExtensionsGranted, 1);
+  assert.equal(observed.filter(e => e.type === 'invocation-tool-extension').length, 1);
+  assert.ok(kills > 0);
+});
+
+test('tool budget extends again when editing the same file in each interval', async () => {
+  const observed = [];
+  const spawnImpl = () => {
+    const proc = new EventEmitter();
+    proc.stdout = new PassThrough(); proc.stderr = new PassThrough(); proc.kill = () => {};
+    setImmediate(() => {
+      for (let i = 0; i < 6; i++) {
+        proc.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [
+          { type: 'toolCall', name: 'edit', arguments: { path: 'src/same.js' } },
+        ] } }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_start', toolCallId: `e${i}`, toolName: 'edit', args: { path: 'src/same.js' } }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_end', toolCallId: `e${i}`, toolName: 'edit', isError: false }) + '\n');
+      }
+      proc.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } }) + '\n');
+      proc.emit('close', 0);
+    });
+    return proc;
+  };
+  const result = await runPiSubagent({ modelId: 'stub/model', cwd: tmpKit(), toolNames: ['edit'], prompt: 'fixture',
+    limits: { max_turns: 20, max_tool_calls: 2, extension_tool_calls: 2, max_tool_extensions: 2, absolute_max_tool_calls: 6 },
+    onEvent: (type, data) => observed.push({ type, data }) }, { piEntry: 'fake-cli', spawnImpl });
+  assert.equal(result.ok, true);
+  assert.equal(result.child.toolExtensionsGranted, 2);
+  assert.equal(result.child.finalToolLimit, 6);
+});
+
+test('failed edits do not justify extending the tool budget', async () => {
+  const spawnImpl = () => {
+    const proc = new EventEmitter();
+    proc.stdout = new PassThrough(); proc.stderr = new PassThrough(); proc.kill = () => {};
+    setImmediate(() => {
+      for (let i = 0; i < 4; i++) {
+        proc.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [
+          { type: 'toolCall', name: 'edit', arguments: { path: 'src/same.js' } },
+        ] } }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_start', toolCallId: `f${i}`, toolName: 'edit', args: { path: 'src/same.js' } }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_end', toolCallId: `f${i}`, toolName: 'edit', isError: true }) + '\n');
+      }
+      proc.emit('close', 0);
+    });
+    return proc;
+  };
+  const result = await runPiSubagent({ modelId: 'stub/model', cwd: tmpKit(), toolNames: ['edit'], prompt: 'fixture',
+    limits: { max_turns: 20, max_tool_calls: 2, extension_tool_calls: 2, max_tool_extensions: 2, absolute_max_tool_calls: 6 } },
+  { piEntry: 'fake-cli', spawnImpl });
+  assert.equal(result.child.stopReason, 'tool-call-limit');
+  assert.equal(result.child.toolExtensionsGranted, 0);
+});
+
+test('tool budget refuses repeated commands without new files', async () => {
+  const observed = [];
+  const spawnImpl = () => {
+    const proc = new EventEmitter();
+    proc.stdout = new PassThrough(); proc.stderr = new PassThrough(); proc.kill = () => {};
+    setImmediate(() => {
+      for (let i = 0; i < 4; i++) {
+        proc.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [
+          { type: 'toolCall', name: 'ludi_exec', arguments: { command: 'same command' } },
+        ] } }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_start', toolCallId: `x${i}`, toolName: 'ludi_exec', args: { command: 'same command' } }) + '\n');
+        proc.stdout.write(JSON.stringify({ type: 'tool_execution_end', toolCallId: `x${i}`, toolName: 'ludi_exec', isError: false }) + '\n');
+      }
+      proc.emit('close', 0);
+    });
+    return proc;
+  };
+  const result = await runPiSubagent({ modelId: 'stub/model', cwd: tmpKit(), toolNames: ['ludi_exec'], prompt: 'fixture',
+    limits: { max_turns: 20, max_tool_calls: 2, extension_tool_calls: 2, max_tool_extensions: 2, absolute_max_tool_calls: 6 },
+    onEvent: (type, data) => observed.push({ type, data }) }, { piEntry: 'fake-cli', spawnImpl });
+  assert.equal(result.child.toolExtensionsGranted, 0);
+  assert.equal(result.child.stopReason, 'tool-call-limit');
 });
 
 test('sanitizeInvocationEvent drops payload details and bounds strings', () => {

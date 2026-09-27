@@ -71,6 +71,25 @@ test('API start uses the user-level binding path without touching the real agent
   } finally { ctx.session.close(); }
 });
 
+test('final callback failure corrects the persisted run and final report', async () => {
+  const session = openStore(dbPath());
+  try {
+    let runId;
+    await assert.rejects(orchestrate({
+      request: 'finish callback failure', plan: [spec('a', 'scout')], agents, routing, registry: REG,
+      policy: DEFAULT_POLICY, session, runner: { async run(t) { return completed(t); } },
+      projectStore: { async onPlan() {}, async onTaskUpdate() {}, async onFinal() { throw new Error('final sync unavailable'); } },
+    }), error => { runId = error.runId; return error.persisted === true && /final sync unavailable/.test(error.message); });
+    assert.equal(session.getRun(runId).status, 'failed');
+    assert.equal(session.loadTasks(runId)[0].status, 'completed', 'do not lose completed work');
+    const reports = session.loadTrace(runId).filter(e => e.type === 'final-report');
+    assert.equal(reports.length, 2);
+    assert.match(reports.at(-1).report, /状態: incomplete.*failed/);
+    assert.match(reports.at(-1).report, /final sync unavailable/);
+    assert.equal(session.loadTrace(runId).at(-1).type, 'final-report');
+  } finally { session.close(); }
+});
+
 test('persistent run creation stores the run, tasks and trace', async () => {
   const session = openStore(dbPath());
   const r = await orchestrate({

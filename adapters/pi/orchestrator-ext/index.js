@@ -62,7 +62,7 @@ export default function orchestratorExtension(pi) {
         const active = shown.tasks.filter(t => t.status === 'running');
         if (action === 'children') return active.length ? active.map(t => `${t.id} ${t.assignedAgent} running`).join('\n') : 'active children: none';
         if (action === 'result') return shown.tasks.map(t => `${t.id} ${t.status} ${String(t.result?.summary ?? '').split('\n')[0]}`).join('\n');
-        return `${formatReport(shown)}\n\nactive children: ${active.length ? active.map(t => t.id).join(', ') : 'none'}\nchild sessions: ${children.length}`;
+        return `${shown.report ?? formatReport(shown)}\n\nactive children: ${active.length ? active.map(t => t.id).join(', ') : 'none'}\nchild sessions: ${children.length}`;
       }
       if (action === 'decisions') {
         const rows = pendingDecisions(ctx, { runId: params.runId || null });
@@ -91,7 +91,8 @@ export default function orchestratorExtension(pi) {
       }
       const health = createRunHealth(ctx);
       const invoke = createPiInvoker();
-      const runner = createRunRunner(ctx, { invoke, runSubagent: createPiSubagentRunner(), repoRoot: params.repo || null, apply: false, health });
+      const runner = createRunRunner(ctx, { invoke, runSubagent: createPiSubagentRunner(), repoRoot: params.repo || null, apply: false, health,
+        runId: ['resume', 'answer'].includes(action) ? params.runId : null });
       if (action === 'answer') {
         answerOrchestration(ctx, { runId: params.runId, decisionId: params.decisionId, answer: params.answer });
         const result = await resumeOrchestration(ctx, { runId: params.runId, repoRoot: params.repo || null, runner, invoke, health, onProgress });
@@ -103,6 +104,10 @@ export default function orchestratorExtension(pi) {
       }
       const result = await startOrchestration(ctx, { request: params.request, repoRoot: params.repo || null, runner, invoke, health, onProgress });
       return formatReport(result);
+    } catch (error) {
+      if (!error.runId) throw error;
+      const shown = showRun(ctx, error.runId);
+      return `${shown.report ?? formatReport(shown)}\n\n実行エラー: ${error.message}`;
     } finally {
       ctx.session.close();
     }
@@ -114,7 +119,7 @@ export default function orchestratorExtension(pi) {
       const { action, params } = parseOrchestrateCommand(args);
       try {
         const body = await run(action, params, ctx, message => ctx.ui.notify(message, 'info'));
-        ctx.ui.notify(body.slice(0, 500), 'info');
+        ctx.ui.notify(body, 'info');
       } catch (e) { ctx.ui.notify(`orchestration error: ${e.message}`, 'error'); }
     },
   });
