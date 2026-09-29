@@ -9,6 +9,8 @@ adapters/*/models.local.json
 work/
 artifacts/
 .codesearch.db/
+# Local run investigations can contain private workspace paths; keep them out of Git and npm.
+docs/reports/strategy-evolution-lab-run-*.md
 
 # Secrets — never tracked
 .env

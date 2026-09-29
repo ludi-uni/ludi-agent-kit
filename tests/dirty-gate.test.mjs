@@ -154,8 +154,13 @@ test('C: coder edits, fails tests, retries: its own changes do not trigger the g
 test('D: review finds blocking issue -> rework task runs without the gate on the first implementation\'s changes', async () => {
   const repo = gitRepo();
   const { calls, runSubagent } = subagentStub({ writes: ['impl.js'], reply: req => {
-    if (req.taskId === 'rev') return json({ status: 'completed', summary: 'reviewed', acceptance: [{ id: 'A1', met: true, evidence: 'read diff' }], remainingIssues: [{ summary: 'missing null check', blocking: true }] });
-    if (req.taskId === 't3') return okResult(); // re-review: clean
+    if (req.taskId === 'rev') return json({ status: 'completed', summary: 'reviewed', acceptance: [{ id: 'A1', met: true, evidence: 'read diff' }],
+      reviewFindings: [{ id: 'F1', source_task_id: 'rev', severity: 'blocking', classification: 'project_defect', title: 'missing null check',
+        description: 'null check missing in impl.js', evidence: [{ type: 'file_path', location: 'impl.js' }], affected_acceptance_ids: ['A1'],
+        affected_files: ['impl.js'], suggested_scope: { summary: 'Add null check in impl.js', affected_acceptance_ids: ['A1'], affected_files: ['impl.js'], subsystems: ['runtime'] }, confidence: 0.9 }] });
+    if (req.taskId === 't3') return okResult({ verification: [{ command: 'pytest null-check', result: 'pass' }],
+      evidence: [{ type: 'test_result', source: 'verification', result: 'pass', related_acceptance: 'A1', command: 'pytest null-check' }],
+      acceptance: [{ id: 'A1', met: true, evidence: 'pytest null-check' }] });
     return okResult();
   } });
   // Use the subagent path for reviewer too by making every agent run through the same stub.

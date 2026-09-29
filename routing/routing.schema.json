@@ -19,6 +19,11 @@
         "properties": {
           "description": { "type": "string" },
           "tier": { "enum": ["free", "low", "mid", "high"] },
+          "capability_class": { "enum": ["basic", "standard", "strong", "expert"] },
+          "cost_class": { "enum": ["free", "included", "low", "paid", "high"] },
+          "availability_class": { "enum": ["available", "temporarily_unavailable", "quota_exhausted", "disabled", "unknown"] },
+          "roles": { "type": "array", "items": { "type": "string" } },
+          "artifact_types": { "type": "array", "items": { "type": "string" } },
           "vision": { "type": "boolean" }
         }
       }

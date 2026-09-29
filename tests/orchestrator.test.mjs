@@ -167,14 +167,14 @@ test('retry exhaustion: attempts stop at max_retries + 1 and the task fails', as
   assert.equal(r.status, 'incomplete');
 });
 
-test('rework: blocking review findings send work back to the implementer and schedule a re-review (bounded)', async () => {
+test('legacy blocking review issue is normalized without regenerating the original implementation goal', async () => {
   const runner = fakeRunner(t => (t.assignedAgent === 'reviewer' ? completed(t, { remainingIssues: [{ summary: 'null check missing', severity: 'high' }] }) : completed(t)));
   const r = await run({ request: 'Fix the failing average() test', runner, policy: { limits: { max_rework_cycles: 1 } } });
-  assert.deepEqual(runner.calls.map(c => c.id), ['t1', 't2', 't3', 't4', 't5', 't6']);
-  assert.equal(r.tasks[4].assignedAgent, 'coder');
-  assert.equal(r.tasks[5].assignedAgent, 'reviewer');
+  assert.deepEqual(runner.calls.map(c => c.id), ['t1', 't2', 't3', 't4']);
+  assert.equal(r.tasks.filter(t => t.repairScope).length, 0);
   assert.equal(r.status, 'incomplete');
-  assert.ok(r.unresolved.some(u => /blocking issues remain/.test(u)));
+  assert.equal(r.reviewFindings[0]?.classification, 'project_defect');
+  assert.ok(r.findingDecisions.every(d => d.action !== 'repair'));
 });
 
 // ---------- escalation gate ----------

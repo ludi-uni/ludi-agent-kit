@@ -5,37 +5,37 @@
   "backends": {
     "local": {
       "description": "Locally hosted model (llama.cpp / vLLM / any OpenAI-compatible local endpoint). Cheapest; no external data transfer.",
-      "tier": "free",
+      "tier": "free", "capability_class": "basic", "cost_class": "free", "roles": ["coder", "tester", "scout", "reviewer", "design-planner"],
       "vision": false
     },
     "cheap": {
       "description": "Low-cost hosted model for routine code, search summaries and context reduction.",
-      "tier": "low",
+      "tier": "low", "capability_class": "standard", "cost_class": "low", "roles": ["coder", "tester", "scout", "reviewer", "design-planner"],
       "vision": false
     },
     "sol": {
       "description": "Strong general coding/reasoning model.",
-      "tier": "high",
+      "tier": "high", "capability_class": "strong", "cost_class": "high", "roles": ["coder", "tester", "scout", "reviewer", "design-planner"],
       "vision": false
     },
     "astra": {
       "description": "Vision-capable reasoning model.",
-      "tier": "high",
+      "tier": "high", "capability_class": "strong", "cost_class": "high", "roles": ["scout", "reviewer", "design-planner"],
       "vision": true
     },
     "codex": {
       "description": "Codex CLI / API backend. Treated as one backend among others, not a special case.",
-      "tier": "high",
+      "tier": "high", "capability_class": "expert", "cost_class": "high", "roles": ["coder", "tester", "reviewer"],
       "vision": false
     },
     "qoder": {
       "description": "Qoder-hosted model slot (bound in the adapter to a concrete model, e.g. a Flash-class model on a free campaign). Cheap-first candidate for routine code work.",
-      "tier": "low",
+      "tier": "low", "capability_class": "standard", "cost_class": "low", "roles": ["coder", "tester", "scout", "reviewer", "design-planner"],
       "vision": false
     },
     "devin": {
       "description": "Devin-hosted model slot (bound in the adapter to a concrete model, e.g. an SWE-class model). Strong-first candidate for nontrivial code and review.",
-      "tier": "high",
+      "tier": "high", "capability_class": "strong", "cost_class": "high", "roles": ["coder", "tester", "reviewer", "design-planner"],
       "vision": false
     }
   },
@@ -73,7 +73,7 @@
     }
   },
   "escalation": {
-    "description": "Ordered escalation ladder. A task that fails or is judged too hard on one capability may be retried on the next. Not implemented as a runtime yet.",
+    "description": "Ordered escalation ladder. A bounded task may move only to metadata-confirmed, policy-allowed stronger routes.",
     "ladders": {
       "code": ["cheap-code", "strong-code"]
     }

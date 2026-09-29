@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Orchestrate one high-level request, or resume a persisted run.
 // Usage:
-//   node scripts/orchestrate.mjs [--dry-run] [--planner rules|model] [--repo <dir>] [--apply]
+//   node scripts/orchestrate.mjs [--dry-run] [--planner rules|model|adaptive] [--repo <dir>] [--apply]
 //                                [--policy <file>] [--store <db>] [--out <dir>] [--json] [--trace] "<request>"
 //   node scripts/orchestrate.mjs --list [--status <run-status>] [--store <db>]
 //   node scripts/orchestrate.mjs --decisions [--resume <run-id>] [--store <db>]
@@ -47,7 +47,7 @@ for (let i = 0; i < args.length; i++) {
 const cleanupMode = !!(opts.prune || opts.delete || opts.clear);
 const request = opts.request ?? (opts.resume || opts.list || opts.decisions || opts.show || cleanupMode ? '' : positional.join(' '));
 const storePath = resolve(opts.store ?? defaultStorePath(kit));
-const usage = 'usage: orchestrate.mjs [--dry-run] [--planner rules|model] [--repo dir] [--apply] [--policy file] [--store db] [--out dir] [--json] [--trace] "<request>" | --list [--status] | --decisions [--resume id] | --show id | --resume id [--answer decision-id text] | --prune [--older-than 7d] | --delete id [--force] | --clear [--force] [--include-active]';
+const usage = 'usage: orchestrate.mjs [--dry-run] [--planner rules|model|adaptive] [--repo dir] [--apply] [--policy file] [--store db] [--out dir] [--json] [--trace] "<request>" | --list [--status] | --decisions [--resume id] | --show id | --resume id [--answer decision-id text] | --prune [--older-than 7d] | --delete id [--force] | --clear [--force] [--include-active]';
 if (!request && !opts.resume && !opts.list && !opts.decisions && !opts.show && !cleanupMode) { console.error(usage); process.exit(2); }
 // Cleanup flag validation.
 const cleanupFlags = [opts.prune && '--prune', opts.delete && '--delete', opts.clear && '--clear'].filter(Boolean);
@@ -61,7 +61,7 @@ if (opts['older-than']) {
   catch (e) { console.error(e.message); process.exit(2); }
 }
 const planner = opts.planner ?? 'rules';
-if (!['rules', 'model'].includes(planner)) { console.error(`unknown planner "${planner}"`); process.exit(2); }
+if (!['rules', 'model', 'adaptive'].includes(planner)) { console.error(`unknown planner "${planner}"`); process.exit(2); }
 
 const routing = loadRouting(join(kit, 'routing/routing.json'));
 const { registry } = loadPiRegistry(kit, routing);

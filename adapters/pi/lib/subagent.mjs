@@ -110,11 +110,14 @@ export async function runPiSubagent(req, { piEntry = locatePiEntry(), spawnImpl 
   const child = {
     taskId: req.taskId ?? null, runId: req.runId ?? null, childSessionId, agent: req.agent ?? null,
     modelId: req.modelId, backend: req.backend ?? null, startedAt, finishedAt: null, status: 'running',
-    toolCalls: 0, turns: 0, uniqueFilesInspected: 0, toolNames: {}, extensionsGranted: 0, toolExtensionsGranted: 0, initialTurns, finalTurnLimit: initialTurns, finalToolLimit: toolCap, stopReason: null,
+    toolCalls: 0, turns: 0, lastProgressTurn: null, lastProgressToolCall: null, uniqueFilesInspected: 0, toolNames: {}, extensionsGranted: 0, toolExtensionsGranted: 0, initialTurns, finalTurnLimit: initialTurns, finalToolLimit: toolCap, stopReason: null,
   };
   // Runtime telemetry keeps command fingerprints, not full shell payloads.
   const tracker = createPiEventTracker({ compactCommands: true });
   let unkeyedTools = 0;
+  let consecutiveToolFailures = 0;
+  const progressFiles = new Set();
+  const progressCommands = new Set();
   let stdout = '';
   let stderr = '';
   try {
@@ -158,7 +161,23 @@ export async function runPiSubagent(req, { piEntry = locatePiEntry(), spawnImpl 
             if (parsedLine?.type === 'tool_execution_end') {
               const started = startedTools.get(parsedLine.toolCallId);
               if (parsedLine.toolCallId) startedTools.delete(parsedLine.toolCallId);
-              if (parsedLine.isError === false && parsedLine.result?.isError !== true && started) successfulTools.push(started);
+              if (parsedLine.isError === false && parsedLine.result?.isError !== true && started) {
+                successfulTools.push(started);
+                consecutiveToolFailures = 0;
+                const fresh = ['edit', 'write'].includes(started.name) ||
+                  (started.path && !progressFiles.has(started.path)) ||
+                  (started.command && !progressCommands.has(started.command));
+                if (started.path) progressFiles.add(started.path);
+                if (started.command) progressCommands.add(started.command);
+                if (fresh) {
+                  child.lastProgressTurn = tracker.state.turns;
+                  child.lastProgressToolCall = tracker.state.toolCalls;
+                }
+              } else if (parsedLine.isError === true || parsedLine.result?.isError === true) {
+                consecutiveToolFailures++;
+                child.consecutiveToolFailures = consecutiveToolFailures;
+                child.repeatedToolFailure = consecutiveToolFailures >= 2;
+              }
               emit('invocation-tool-completed', { tool: { name: parsedLine.toolName ?? 'tool' } });
             }
           } catch { /* non-json diagnostic */ }

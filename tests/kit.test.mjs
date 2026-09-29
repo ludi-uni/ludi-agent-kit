@@ -27,14 +27,14 @@ test('validate.mjs passes for the shipped kit', () => {
   const report = validateKit(kit);
   assert.deepEqual(report.errors, []);
   assert.equal(report.result, 'PASS');
-  assert.deepEqual(report.summary.agents.sort(), ['browser->browser', 'coder->strong-code', 'orchestrator->orchestration', 'reviewer->deep-review', 'scout->cheap-code', 'tester->cheap-code', 'visual->vision-reasoning']);
+  assert.deepEqual(report.summary.agents.sort(), ['browser->browser', 'coder->strong-code', 'design-planner->cheap-code', 'orchestrator->orchestration', 'reviewer->deep-review', 'scout->cheap-code', 'tester->cheap-code', 'visual->vision-reasoning']);
 });
 
-test('exactly the seven thin agents exist and none pins a model/provider', () => {
+test('exactly the eight thin agents exist and none pins a model/provider', () => {
   const routing = loadRouting(join(kit, 'routing/routing.json'));
   const { agents, errors } = loadAgents(join(kit, 'agents'), routing);
   assert.deepEqual(errors, []);
-  assert.deepEqual(agents.map(a => a.meta.name).sort(), ['browser', 'coder', 'orchestrator', 'reviewer', 'scout', 'tester', 'visual']);
+  assert.deepEqual(agents.map(a => a.meta.name).sort(), ['browser', 'coder', 'design-planner', 'orchestrator', 'reviewer', 'scout', 'tester', 'visual']);
   const bad = parseFrontmatter('---\nname: x\ndescription: d\ncapability: strong-code\nmodel: gpt-something\n---\nbody');
   assert.ok(validateAgent(bad, routing).some(e => e.includes('must not pin a model')));
 });

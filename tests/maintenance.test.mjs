@@ -72,7 +72,7 @@ test('a forced migration (removed model) produces a full proposal with rollback'
   const change = report.changes.find(c => c.affected.backend === 'qoder');
   assert.ok(change.changeReason.includes('removed'));
   assert.deepEqual(change.affected.capabilities, ['cheap-code', 'orchestration']);
-  assert.deepEqual(change.affected.agents, ['orchestrator', 'scout', 'tester']);
+  assert.deepEqual(change.affected.agents, ['design-planner', 'orchestrator', 'scout', 'tester']);
   assert.equal(change.currentModel.provider, 'qoder');
   assert.equal(change.proposedModel.model, 'Qwen3.9-Flash'); // best eligible under low-tier weights
   assert.match(change.expectedCostImpact, /\$0 \(free\) -> proposed ~\$/);
