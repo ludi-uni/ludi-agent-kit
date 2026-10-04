@@ -101,6 +101,34 @@ test('C: multi-capability structural change -> reconfigure is invoked', async ()
   assert.equal(run.escalation.targetTier, 'reconfigure');
 });
 
+test('live prompts carry real monitor, proposal, catalog and escalation facts', async () => {
+  const prompts = [];
+  const catalog = cat([
+    m('qoder', 'Qwen3.8-Flash', { scores: { coding: 30, reasoning: 25, speed: 85 } }),
+    FREE_GOOD, PREMIUM,
+  ]);
+  const result = await runMaintenanceLive({
+    routing, registry: registryWith({ qoder: { provider: 'qoder', model: 'Qwen3.8-Flash' } }),
+    agents, catalog, events: [{ type: 'removed', provider: 'qoder', model: 'Qwen3.8-Flash' }],
+    invoke: async req => {
+      prompts.push(req.prompt);
+      return ok(req.prompt.includes('STAGE: monitor') ? MON_OK() : req.prompt.includes('STAGE: evaluate') ? EVAL_OK() : REC_OK());
+    },
+  });
+  assert.equal(prompts.length, 3);
+  for (const prompt of prompts) {
+    assert.match(prompt, /catalog models \(only these ids exist\): .*freep\/free-good/);
+    assert.match(prompt, /monitor findings \(deterministic\): .*removed: qoder\/Qwen3.8-Flash/);
+  }
+  assert.match(prompts[0], /"severity":"high"/);
+  assert.match(prompts[1], /evaluation result \(deterministic\):/);
+  assert.match(prompts[1], /"currentModel":/);
+  assert.match(prompts[1], /"proposedModel":/);
+  assert.match(prompts[2], /escalation record: .*"targetTier":"reconfigure"/);
+  assert.ok(result.proposal.changes.length > 0);
+  assert.equal(result.monitor.changed, true, 'LLM annotations do not replace deterministic authority');
+});
+
 // --- D: monitor model fails -> next cheap candidate --------------------------
 test('D: monitor invocation failure falls back to the next ordered candidate', async () => {
   const calls = [];
@@ -114,6 +142,67 @@ test('D: monitor invocation failure falls back to the next ordered candidate', a
   assert.equal(inv.fallbackOccurred, true);
   assert.equal(inv.selectedModel, 'cloudp/cheap-2');
   assert.equal(inv.invocations[0].failureClass, 'invoke');
+});
+
+test('live selection passes one provider prefix and preserves thinking', async () => {
+  for (const thinking of [null, 'high']) {
+    const selection = selectTierModel([{ ...FREE_GOOD, ...(thinking ? { thinking } : {}) }], 'monitor', DEFAULT_POLICY);
+    const expected = `freep/free-good${thinking ? ':high' : ''}`;
+    const calls = [];
+    const result = await invokeTier('monitor', selection, {
+      invoke: async req => {
+        calls.push(req.modelId);
+        return req.modelId === expected ? ok(MON_OK()) : fail(`unknown model: ${req.modelId}`);
+      },
+    });
+    assert.deepEqual(calls, [expected]);
+    assert.equal(result.degradedToDeterministic, false);
+  }
+});
+
+test('budget rejects only the candidate, preserving an eligible ordinary fallback', async () => {
+  const models = [
+    m('fixture', 'premium-free', { ...PREMIUM, provider: 'fixture', model: 'premium-free', cost: { free: true } }),
+    m('fixture', 'ordinary', { scores: { coding: 95, reasoning: 95, speed: 90 }, cost: { usdPerMInput: 0.1, usdPerMOutput: 0.4 } }),
+  ];
+  const selection = selectTierModel(models, 'reconfigure', DEFAULT_POLICY);
+  assert.equal(selection.ordered[0].premium, true);
+  const calls = [];
+  const result = await invokeTier('reconfigure', selection, {
+    invocationAllowed: (_tier, candidate) => !candidate.premium,
+    invoke: async req => { calls.push(req.modelId); return ok(REC_OK()); },
+  });
+  assert.deepEqual(calls, ['fixture/ordinary']);
+  assert.equal(result.selected.model, 'fixture/ordinary');
+  assert.equal(result.degradedToDeterministic, false);
+  assert.equal(result.skippedByBudget, true);
+  assert.equal(result.attempts.length, 1, 'budget skips are not invocations');
+});
+
+test('cost refusal and a refused schema retry both advance to a cheaper candidate', async () => {
+  const selection = { ordered: [
+    { provider: 'fixture', model: 'fixture/expensive', effectiveCostUsd: 0.02 },
+    { provider: 'fixture', model: 'fixture/cheap', effectiveCostUsd: 0.005 },
+  ] };
+  for (const scenario of ['initial-cost', 'retry-cost', 'global-cap']) {
+    let spent = 0, invocations = 0;
+    const calls = [];
+    const result = await invokeTier('evaluate', selection, {
+      invocationAllowed: (_tier, candidate) => {
+        const limit = scenario === 'retry-cost' ? 0.025 : 0.01;
+        if (scenario === 'global-cap' || spent + candidate.effectiveCostUsd > limit) return false;
+        spent += candidate.effectiveCostUsd; invocations++; return true;
+      },
+      invoke: async req => {
+        calls.push(req.modelId);
+        return ok(req.modelId === 'fixture/expensive' ? 'malformed' : EVAL_OK());
+      },
+    });
+    assert.deepEqual(calls, scenario === 'initial-cost' ? ['fixture/cheap'] : scenario === 'retry-cost' ? ['fixture/expensive', 'fixture/cheap'] : []);
+    assert.equal(result.attempts.length, invocations);
+    assert.equal(result.skippedByBudget, true);
+    assert.equal(result.degradedToDeterministic, scenario === 'global-cap');
+  }
 });
 
 // --- E: malformed JSON -> one retry -> success -------------------------------

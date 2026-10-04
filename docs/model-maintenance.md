@@ -329,7 +329,13 @@ Single-run lock (`out/model-maintenance.lock`, stale after 30 min, auto-recovere
 atomic artifact writes (tmp+rename), `runId`/`startedAt`/`completedAt` in
 `out/model-maintenance.lastrun.json`. Budget (`maintenance-policy.json` `budget`):
 `maxEstimatedCostPerRunUsd`, `maxPremiumInvocationsPerRun`, `maxTotalInvocationsPerRun`
-— over-budget skips invocations, continues deterministically, sets `budgetLimited`.
+— each real invocation reserves its candidate's estimated cost before execution,
+including schema retries and fallbacks. Premium usage is counted from candidate
+metadata. A cost/premium refusal skips that candidate and keeps eligible fallbacks;
+a globally exhausted allowance refuses every remaining candidate. Budget skips set
+`budgetLimited` even when a fallback succeeds. When no candidate can run, execution
+continues deterministically. Live prompts include the deterministic monitor/proposal facts,
+catalog IDs, and (for reconfigure) the escalation reason.
 
 ## Phase 6 — shadow mode + calibration (`scripts/report-model-maintenance.mjs`)
 

@@ -237,7 +237,7 @@ test('H: CLI --prune honours --older-than and prints Japanese output', () => {
   check.close();
 });
 
-test('I: CLI --delete removes terminal runs and requires --force for active runs', () => {
+test('I: CLI --delete previews every run and requires --force to delete', () => {
   const path = dbPath();
   const session = openStore(path);
   const done = session.createRun({ request: 'finished', policy: DEFAULT_POLICY });
@@ -245,10 +245,19 @@ test('I: CLI --delete removes terminal runs and requires --force for active runs
   const live = session.createRun({ request: 'live', policy: DEFAULT_POLICY });
   session.close();
 
-  const blocked = runCli(['--delete', live, '--store', path]);
-  assert.notEqual(blocked.status, 0);
-  assert.match(blocked.stderr, /active\/resumable; use --force/);
-  const del = runCli(['--delete', done, '--store', path]);
+  for (const id of [done, live]) {
+    const preview = runCli(['--delete', id, '--store', path]);
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.match(preview.stdout, /削除対象（プレビュー）/);
+    assert.match(preview.stdout, /--force/);
+    const dry = runCli(['--delete', id, '--force', '--dry-run', '--json', '--store', path]);
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.equal(JSON.parse(dry.stdout).executed, false);
+    const check = openStore(path);
+    try { assert.ok(check.getRun(id), 'preview must preserve run history'); }
+    finally { check.close(); }
+  }
+  const del = runCli(['--delete', done, '--force', '--store', path]);
   assert.equal(del.status, 0, del.stderr);
   assert.match(del.stdout, new RegExp(`削除しました: ${done}`));
   const missing = runCli(['--delete', done, '--store', path]);
@@ -271,6 +280,11 @@ test('J: CLI --clear previews, --force clears terminal, --include-active is expl
   assert.equal(preview.status, 0, preview.stderr);
   assert.match(preview.stdout, /削除対象（プレビュー）: 1 ラン/);
   assert.match(preview.stdout, /--force/);
+  const dry = runCli(['--clear', '--force', '--include-active', '--dry-run', '--json', '--store', path]);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.equal(JSON.parse(dry.stdout).executed, false);
+  const preserved = openStore(path);
+  try { assert.equal(preserved.listRuns().length, 2); } finally { preserved.close(); }
   const forced = runCli(['--clear', '--force', '--store', path]);
   assert.equal(forced.status, 0, forced.stderr);
   assert.match(forced.stdout, /削除しました: 1 ラン/);

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -116,6 +116,35 @@ test('git baseline ignores existing dirty files and reports new agent changes', 
   assert.match(outside, /outside/);
 });
 
+test('staged rename hashes the destination and detects repeated edits after rename', t => {
+  const root = mkdtempSync(join(tmpdir(), 'ludi-wt-rename-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = args => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git(['init']);
+  writeFileSync(join(root, 'old path.txt'), 'baseline\n');
+  git(['add', '.']);
+  git(['-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '-m', 'base']);
+  const baseline = captureWorktree(root);
+  renameSync(join(root, 'old path.txt'), join(root, 'new path.txt'));
+  git(['add', '-A']);
+  const renamed = captureWorktree(root);
+  assert.ok(renamed.entries['new path.txt'].hash);
+  assert.equal(renamed.entries['old path.txt'].code, 'D ');
+  assert.deepEqual(diffWorktree(baseline, renamed).map(c => [c.path, c.kind]).sort(), [
+    ['new path.txt', 'added'], ['old path.txt', 'deleted'],
+  ]);
+  writeFileSync(join(root, 'new path.txt'), 'first edit\n');
+  const edited = captureWorktree(root);
+  writeFileSync(join(root, 'new path.txt'), 'second edit\n');
+  const twiceEdited = captureWorktree(root);
+  assert.equal(edited.entries['new path.txt'].code, twiceEdited.entries['new path.txt'].code);
+  assert.notEqual(edited.entries['new path.txt'].hash, twiceEdited.entries['new path.txt'].hash);
+  assert.deepEqual(diffWorktree(edited, twiceEdited).map(c => [c.path, c.kind]), [['new path.txt', 'modified']]);
+});
+
 test('safe shell is allowed and dangerous shell becomes a user decision', () => {
   assert.equal(decideShell('npm test', { shell: 'limited' }).allow, true);
   assert.equal(decideShell('git diff -- src', { shell: 'limited' }).allow, true);
@@ -128,6 +157,46 @@ test('safe shell is allowed and dangerous shell becomes a user decision', () => 
   });
   assert.equal(ev.verdict, 'blocked');
   assert.ok(ev.decisions[0].flags.includes('external_publish'));
+});
+
+test('shell gate refuses compound commands, expansion and unrelated safe-delete tokens', () => {
+  const denied = [
+    'Get-Content README.md; Set-Content ../outside.txt changed',
+    'git status; git -C .. push',
+    'git status\ngit push',
+    'git status && git push',
+    'Get-Content README.md | Set-Content ../outside.txt',
+    'git status > ../outside.txt',
+    'Get-Content $(Set-Content ../outside.txt changed)',
+    'Get-Content $env:SECRET',
+    'git pu`sh',
+    'git -C .. push',
+    '.\\git.exe -C .. push',
+    'C:\\Git\\cmd\\git.exe --no-pager -C .. push',
+    '.\\git.cmd -c alias.ship=push ship',
+    'npm --prefix . publish',
+    'npm.cmd --prefix=. publish',
+    'C:\\Tools\\pnpm.exe --dir . publish',
+    'yarn --cwd . publish',
+    'npm --unknown-option=x test',
+    'gh --repo fixture pr merge',
+    'Remove-Item ../valuable -Rec',
+    'Microsoft.PowerShell.Management\\Remove-Item ../valuable -Re',
+    'ri ../valuable -R',
+    'git --git-dir=../.git reset --hard',
+    'git -c alias.ship=push ship',
+    'Remove-Item ../valuable -Recurse; Write-Output node_modules',
+    'Remove-Item ../valuable -Recurse -Verbose node_modules',
+    'Remove-Item node_modules -Recurse',
+    'rm -rf dist',
+    'Get-Content "unterminated',
+  ];
+  for (const shell of ['limited', 'true']) for (const command of denied) {
+    assert.equal(decideShell(command, { shell }).allow, false, `${shell}: ${command}`);
+  }
+  for (const command of ['git -C "repo with spaces" status', '.\\git.exe -C . status', 'npm --prefix "repo with spaces" test', 'pnpm --dir=. test', 'Get-Content "file with spaces.txt"', "Select-String -Pattern 'a;b' -Path README.md", 'node --test tests/test.mjs']) {
+    assert.equal(decideShell(command, { shell: 'limited' }).allow, true, command);
+  }
 });
 
 test('subagent decisions stay with the orchestrator and are not a direct user question', async () => {

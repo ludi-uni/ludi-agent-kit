@@ -151,6 +151,59 @@ test('I: over-budget run skips invocations, continues deterministically', async 
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('positive live budgets cap every invocation, including retries and fallbacks', async () => {
+  for (const mode of ['success', 'schema-retry', 'fallback', 'cost', 'cumulative-cost']) {
+    const dir = tmp();
+    try {
+      const policy = structuredClone(DEFAULT_POLICY);
+      policy.budget = { maxEstimatedCostPerRunUsd: mode === 'cost' ? 0.000001 : mode === 'cumulative-cost' ? 0.04 : 100,
+        maxPremiumInvocationsPerRun: 1, maxTotalInvocationsPerRun: mode.includes('cost') ? 10 : 1 };
+      const catalog = structuredClone(CAT_PLUS_VISION);
+      if (mode === 'cumulative-cost') for (const model of catalog.models) {
+        model.cost = { usdPerMInput: 1, usdPerMOutput: 4 };
+        model.scores = { coding: 90, reasoning: 90, speed: 90 };
+      }
+      const input = manualObs(dir, [OBS('qoder', 'Qwen3.8-Flash', { status: 'removed' })]);
+      let invoked = 0;
+      const run = await runMaintenanceJob({ ...base(dir), catalog, policy, source: 'manual', input, live: true,
+        invoke: async req => {
+          invoked++;
+          if (mode === 'fallback') return { ok: false, error: 'quota' };
+          return { ok: true, text: mode === 'schema-retry' ? 'not JSON' : JSON.stringify({
+            decision: req.prompt.includes('STAGE: monitor') ? 'changed' : 'keep', confidence: 1, reasoningSummary: 'fixture',
+          }) };
+        },
+      });
+      assert.equal(run.status, 'ok', run.error);
+      assert.equal(invoked, mode === 'cost' ? 0 : 1, mode);
+      assert.equal(run.budgetLimited, true, mode);
+      assert.equal(run.invocations.flatMap(t => t.invocations).length, invoked);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test('premium limit uses candidate metadata, not just the reconfigure tier name', async () => {
+  const dir = tmp();
+  try {
+    const policy = structuredClone(DEFAULT_POLICY);
+    policy.budget = { maxEstimatedCostPerRunUsd: 100, maxPremiumInvocationsPerRun: 0, maxTotalInvocationsPerRun: 10 };
+    const catalog = structuredClone(CAT_PLUS_VISION);
+    for (const model of catalog.models) if (model.model === 'pro-strong' || model.model === 'vis-ok') model.premium = true;
+    const input = manualObs(dir, [OBS('qoder', 'Qwen3.8-Flash', { status: 'removed' })]);
+    const calls = [];
+    const run = await runMaintenanceJob({ ...base(dir), catalog, policy, source: 'manual', input, live: true,
+      invoke: async req => {
+        calls.push(req.modelId);
+        return { ok: true, text: JSON.stringify({ decision: 'changed', confidence: 1, reasoningSummary: 'fixture' }) };
+      },
+    });
+    assert.equal(run.status, 'ok', run.error);
+    assert.ok(calls.length > 0, 'nonpremium monitor is still allowed');
+    assert.ok(calls.every(id => !/pro-strong|vis-ok/.test(id)));
+    assert.equal(run.budgetLimited, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // --- J: concurrent runs -> one executes, artifacts intact -----------------------
 test('J: second concurrent run is skipped by the lock', async () => {
   const dir = tmp();

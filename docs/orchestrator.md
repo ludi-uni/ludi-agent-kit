@@ -42,7 +42,14 @@ renders 状態/完了/自動判断/未解決/ユーザー判断が必要 in Japa
 ## Loop
 
 Each round: take runnable tasks (pending, all dependencies completed), run up to
-`max_parallel_tasks` of them, then evaluate each result.
+`max_parallel_tasks` read-only tasks, then evaluate each result. Write-capable agents
+run in exclusive rounds in the shared workspace, without overlapping readers or other writers.
+The standard runner also takes a cross-process writer lease before baselining or
+execution. Its temporary SQLite registry is independent of run stores and uses
+the physical repository root (including junction aliases/subdirectories). A
+competing writer is blocked; retry after the owner finishes. Leases are released
+on completion/error, and a live owning process is never evicted by a timeout.
+Caller-injected runners must enforce the same ownership contract.
 - **success**: the task completes, and any `newTasks` it reports are added (bounded by `max_tasks`).
   If a review reports blocking issues, the work is sent back to the implementer and a
   re-review is added (`max_rework_cycles`).
@@ -148,6 +155,17 @@ observer errors never interrupt execution.
 ## Tool-capable children (Phase 3)
 
 `execution: subagent` runs `pi --mode json -p` with `--tools` limited by `access` (filesystem, shell, git, network). Shell is `ludi_exec` in `adapters/pi/shell-gate`, which refuses push, publish, deploy, reset, and recursive delete before the process runs. `--apply` still uses the old pipeline. With no subagent launcher, `subagent` falls back to the one-shot invoker. A child id, tool count, and turn count are stored on the run trace. Runtime, tool-call, and turn caps are `agent_runtime` in the decision policy. Only `MODEL_FAILURE` and `BACKEND_LIMIT` move up the routing ladder; a failing test retries the same capability with the previous attempt in the contract.
+
+Shell commands must be single literal commands: command chaining, pipelines,
+redirection, expansion and script expressions are refused. Executable paths and
+supported global options are normalized; unsupported Git/package-manager option
+forms are refused. PowerShell recursive-delete abbreviations are also refused.
+Recursive deletion has
+no exception for build directories. This gate is not an OS sandbox: allowed tests
+and builds execute repository code, so use trusted workspaces.
+
+The CLI previews `--delete ID` unless `--force` is supplied. `--dry-run` always
+previews cleanup, even when combined with `--force`.
 
 Dry-run prints mode, workspace, tools, model, dependencies, and acceptance, and does not start pi.
 

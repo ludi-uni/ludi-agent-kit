@@ -107,12 +107,19 @@ if (opts['dry-run'] && !cleanupMode) {
       const id = opts.delete === true ? positional[0] : opts.delete;
       if (!id || String(id).startsWith('--')) { console.error('--delete requires a run id'); process.exit(2); }
       try {
-        const result = deleteOrchestrationRun(ctx, id, { force: !!opts.force });
-        console.log(opts.json ? JSON.stringify(result, null, 2) : `削除しました: ${result.id} (tasks:${result.deleted.tasks} decisions:${result.deleted.decisions} trace:${result.deleted.trace} health:${result.deleted.health})`);
+        if (!opts.force || opts['dry-run']) {
+          const target = previewRunCleanup(ctx, { includeActive: true }).runs.find(r => r.id === id);
+          if (!target) throw new Error(`run not found: ${id}`);
+          const result = { executed: false, run: target };
+          console.log(opts.json ? JSON.stringify(result, null, 2) : `削除対象（プレビュー）: ${target.id} ${target.status} tasks:${target.counts.tasks} decisions:${target.counts.decisions} trace:${target.counts.trace}\n実行するには --force を指定してください`);
+        } else {
+          const result = deleteOrchestrationRun(ctx, id, { force: true });
+          console.log(opts.json ? JSON.stringify(result, null, 2) : `削除しました: ${result.id} (tasks:${result.deleted.tasks} decisions:${result.deleted.decisions} trace:${result.deleted.trace} health:${result.deleted.health})`);
+        }
       } catch (e) { console.error(`削除できません: ${e.message}`); process.exitCode = 1; }
     } else if (opts.clear) {
       try {
-        const result = clearOrchestrationRuns(ctx, { force: !!opts.force, includeActive: !!opts['include-active'] });
+        const result = clearOrchestrationRuns(ctx, { force: !!opts.force && !opts['dry-run'], includeActive: !!opts['include-active'] });
         console.log(opts.json ? JSON.stringify(result, null, 2) : formatCleanup(result, { verb: '削除' }));
       } catch (e) { console.error(`整理できません: ${e.message}`); process.exitCode = 1; }
     } else {

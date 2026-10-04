@@ -84,6 +84,23 @@ test('parallel runnable tasks: independent tasks share a round; the join waits f
   assert.equal(r.status, 'completed');
 });
 
+test('write-capable tasks own exclusive rounds in the shared workspace', async () => {
+  let active = 0, maxActive = 0;
+  const runner = fakeRunner(async t => {
+    active++; maxActive = Math.max(maxActive, active);
+    await Promise.resolve();
+    active--;
+    return completed(t);
+  });
+  const result = await run({
+    plan: [spec('a', 'coder'), spec('b', 'coder'), spec('c', 'scout'), spec('d', 'reviewer'), spec('e', 'coder')],
+    runner,
+  });
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(result.trace.filter(e => e.type === 'round').map(e => e.running), [['a'], ['b'], ['c', 'd'], ['e']]);
+  assert.equal(maxActive, 2, 'only the two read-only siblings may overlap');
+});
+
 test('progress reports start, child arrivals before parallel siblings finish, evaluation and end', async () => {
   const messages = [];
   let release;

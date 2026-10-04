@@ -11,7 +11,7 @@ import { loadRouting } from '../lib/routing.mjs';
 import { loadPiRegistry } from '../adapters/pi/lib/model-registry.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { resolveAgents, resolveCapability } from '../lib/resolve.mjs';
-import { runPipeline, surveyRepo, scoutPrompt, detectTestCommand, runTests, coderPrompt } from '../lib/pipeline.mjs';
+import { runPipeline, inspectPipelineGate, surveyRepo, scoutPrompt, detectTestCommand, runTests, coderPrompt } from '../lib/pipeline.mjs';
 import { parseContextPackMarkdown } from '../lib/context-pack.mjs';
 import { createPiInvoker } from '../adapters/pi/lib/invoke.mjs';
 
@@ -31,8 +31,10 @@ if (errors.length) { console.error(errors.join('\n')); process.exit(1); }
 const resolved = resolveAgents(agents, routing, registry);
 
 if (flag('dry-run')) {
-  mkdirSync(outDir, { recursive: true });
   const repoRoot = resolve(repo);
+  const refusal = inspectPipelineGate(repoRoot);
+  if (refusal) { console.log(JSON.stringify(refusal, null, 2)); process.exit(1); }
+  mkdirSync(outDir, { recursive: true });
   const testCommand = detectTestCommand(repoRoot);
   const baseline = runTests(repoRoot, testCommand);
   const survey = surveyRepo(repoRoot);
@@ -52,5 +54,5 @@ if (flag('dry-run')) {
 }
 
 const summary = await runPipeline({ repoRoot: repo, task, routing, registry, agents, invoke: createPiInvoker(), outDir, maxAttempts, packPath: opt('pack', null) });
-console.log(JSON.stringify({ outcome: summary.outcome, attempts: summary.attempts, escalated: summary.escalated, escalationCandidate: summary.escalationCandidate, applied: summary.applied, contextPack: summary.contextPack, steps: summary.steps.map(s => ({ step: s.step, attempt: s.attempt, backend: s.backend, modelId: s.modelId, ok: s.ok, reason: s.reason, durationMs: s.durationMs })), trace: join(outDir, 'trace.json') }, null, 2));
+console.log(JSON.stringify({ outcome: summary.outcome, failureClass: summary.failureClass, error: summary.error, decision: summary.decision, gate: summary.gate, attempts: summary.attempts, escalated: summary.escalated, escalationCandidate: summary.escalationCandidate, applied: summary.applied, contextPack: summary.contextPack, steps: summary.steps.map(s => ({ step: s.step, attempt: s.attempt, backend: s.backend, modelId: s.modelId, ok: s.ok, reason: s.reason, durationMs: s.durationMs })), trace: summary.outcome === 'worktree-dirty' ? null : join(outDir, 'trace.json') }, null, 2));
 process.exitCode = summary.outcome === 'success' ? 0 : 1;
