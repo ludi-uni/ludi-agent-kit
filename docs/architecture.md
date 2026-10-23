@@ -27,7 +27,10 @@
 ## Data flow (target state)
 
 1. User task → parent (pi main session).
-2. Parent classifies the task into a capability (manual today; a classifier later).
+2. Parent classifies the task into a capability. Orchestrated runs do this
+   deterministically in the `rules` planner (`lib/orchestrator/planner.mjs`,
+   `classifyRequest`); outside the orchestrator the pipeline is still fixed
+   scout→coder and there is no LLM classifier.
 3. `scout` (cheap-code) explores and emits a **Context Pack**.
 4. Parent validates the pack (`lib/context-pack.mjs`) and hands it to `coder` / `visual` /
    `reviewer`, whose capability resolves through routing → adapter model map.

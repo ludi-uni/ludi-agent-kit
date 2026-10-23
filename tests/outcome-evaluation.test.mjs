@@ -11,6 +11,7 @@ import { normalizeLegacyReviewIssue, decideReviewFinding, focusedRepairSpec } fr
 import { newTask } from '../lib/orchestrator/task-store.mjs';
 import { parseStructuredResult } from '../lib/orchestrator/runner.mjs';
 import { orchestrate } from '../lib/orchestrator/orchestrator.mjs';
+import { buildTaskContract } from '../lib/orchestrator/contract.mjs';
 import { openStore } from '../lib/orchestrator/store.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { loadRouting } from '../lib/routing.mjs';
@@ -57,6 +58,135 @@ test('artifact overrides implement kind; evidence-only and artifact-required do 
   const doc = { ...t2('artifact_required'), artifact_type: 'documentation' };
   assert.equal(evaluateResult(doc, { ...run(), result: { ...run().result, artifacts: ['docs/report.md'] } }).verdict, 'success');
   assert.equal(evaluateResult(doc, run()).reasonCodes.includes('INVALID_ARTIFACT'), true);
+});
+
+// An investigation that deliberately reproduces a known failing command. The
+// check carries the explicit expected-failure marker and evidence links the
+// exact command to a met criterion.
+const reproTask = (over = {}) => newTask({ id: 'inv1', title: 'Reproduce failing test', kind: 'investigate',
+  goal: 'Identify why the math test fails and reproduce the failure', artifact_type: 'investigation',
+  expected_outcome: 'evidence_only', assignedAgent: 'scout',
+  acceptance: ['identify the failing source and root cause', 'reproduce the failing command'], ...over });
+const reproRun = () => ({ ok: true, structured: true, worktree: { before: { source: 'git' }, agentChanges: [] }, result: {
+  status: 'completed', summary: 'add() in math.js uses subtraction; reproduced via node --test test/math.test.js.',
+  filesChanged: [], commandsRun: ['node --test test/math.test.js'],
+  verification: [{ command: 'grep -n "a - b" src/math.js', result: 'pass' },
+    { command: 'node --test test/math.test.js', result: 'fail', purpose: 'reproduction', expected_result: 'fail' }],
+  evidence: [
+    { type: 'command_result', source: 'verification', result: 'pass', related_acceptance: 'A1', command: 'grep -n "a - b" src/math.js' },
+    { type: 'command_result', source: 'verification', result: 'fail', related_acceptance: 'A2', command: 'node --test test/math.test.js' }],
+  artifacts: ['src/math.js'],
+  acceptance: [
+    { id: 'A1', met: true, evidence: 'src/math.js add() subtracts; read confirmed' },
+    { id: 'A2', met: true, evidence: 'node --test test/math.test.js reproduced: expected-failure reproduction' }],
+  remainingIssues: [] } });
+
+test('annotated linked expected-failure reproduction passes for an investigation task', () => {
+  const ev = evaluateResult(reproTask(), reproRun());
+  assert.equal(ev.verdict, 'success');
+  assert.deepEqual(ev.reasonCodes, ['EXPECTED_FAILURE_REPRODUCED']);
+  assert.equal(ev.evidenceReferences.length, 2);
+  const repro = ev.evidenceReferences.find(r => r.command === 'node --test test/math.test.js');
+  assert.equal(repro.result, 'fail');
+  assert.equal(repro.purpose, 'reproduction');
+  assert.equal(repro.expected_result, 'fail');
+  assert.equal(repro.related_acceptance, 'A2');
+  // The contract exposes the reproduction marker only on investigation tasks.
+  const text = buildTaskContract(reproTask());
+  assert.match(text, /EXPECTED_FAILURE_REPRODUCTION/);
+  assert.match(text, /expected_result":"fail"/);
+});
+
+test('unannotated failing check on an investigation task is still contradictory', () => {
+  // The observed real-provider run reported an unmarked fail -> stays rejected.
+  const bare = reproRun();
+  bare.result.verification = [{ command: 'node --test test/math.test.js', result: 'fail' }];
+  const ev = evaluateResult(reproTask(), bare);
+  assert.equal(ev.verdict, 'failure');
+  assert.ok(ev.reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  // Annotated check but NO linked evidence -> the command is not excused.
+  const unlinked = reproRun();
+  unlinked.result.evidence = unlinked.result.evidence.filter(e => e.related_acceptance !== 'A2');
+  const ev2 = evaluateResult(reproTask(), unlinked);
+  assert.equal(ev2.verdict, 'failure');
+  assert.ok(ev2.reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  // Marker + evidence, but the linked criterion is not met -> not excused.
+  const unmet = reproRun();
+  unmet.result.acceptance = unmet.result.acceptance.map(a => a.id === 'A2' ? { ...a, met: false } : a);
+  const ev3 = evaluateResult(reproTask(), unmet);
+  assert.equal(ev3.verdict, 'failure');
+  assert.ok(ev3.reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  assert.ok(ev3.reasonCodes.includes('ACCEPTANCE_NOT_MET'));
+  // Evidence reports pass while the annotated check reports fail -> evidence/check mismatch, not excused.
+  const mismatch = reproRun();
+  mismatch.result.evidence[1].result = 'pass';
+  const ev4 = evaluateResult(reproTask(), mismatch);
+  assert.equal(ev4.verdict, 'failure');
+  assert.ok(ev4.reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+});
+
+test('reproduction requires typed evidence linked to a required criterion, not a fabricated acceptance', () => {
+  const claim = reproRun();
+  claim.result.evidence[1].type = 'claim';
+  assert.ok(evaluateResult(reproTask(), claim).reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  const fabricated = reproRun();
+  fabricated.result.evidence[1].related_acceptance = 'A999';
+  fabricated.result.acceptance.push({ id: 'A999', met: true, evidence: 'fabricated criterion' });
+  assert.ok(evaluateResult(reproTask(), fabricated).reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  const noKind = { ...reproTask(), kind: undefined };
+  assert.ok(evaluateResult(noKind, reproRun()).reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  assert.doesNotMatch(buildTaskContract(noKind), /EXPECTED_FAILURE_REPRODUCTION/);
+});
+
+test('reproduction exemption never applies to policy/tool failures or unexpected failing commands', () => {
+  // POLICY_BLOCK is not a truthful observed failure -> never excused.
+  const policy = reproRun();
+  policy.result.verification = [{ command: 'node --test test/math.test.js', result: 'POLICY_BLOCK', purpose: 'reproduction', expected_result: 'fail' }];
+  const ev = evaluateResult(reproTask(), policy);
+  assert.equal(ev.verdict, 'failure');
+  assert.ok(ev.reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  // An arbitrary nonzero exit WITHOUT the marker stays contradictory.
+  const nonzero = reproRun();
+  nonzero.result.verification = [{ command: 'grep -n "a - b" src/math.js', result: 'pass' },
+    { command: 'node --test test/math.test.js', result: 'fail', exitCode: 1 }];
+  const evN = evaluateResult(reproTask(), nonzero);
+  assert.equal(evN.verdict, 'failure');
+  assert.ok(evN.reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  // Annotated + linked reproduction stays excused even when the exit code is recorded.
+  const nonzeroMarked = reproRun();
+  nonzeroMarked.result.verification[1].exitCode = 1;
+  assert.equal(evaluateResult(reproTask(), nonzeroMarked).verdict, 'success');
+  // An extra unexpected failing check alongside the reproduction is not excused.
+  const extra = reproRun();
+  extra.result.verification.push({ command: 'node --test test/other.test.js', result: 'fail' });
+  const ev3 = evaluateResult(reproTask(), extra);
+  assert.equal(ev3.verdict, 'failure');
+  assert.ok(ev3.reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  // Runner-level tool results are never excused by the result-level marker.
+  const toolFail = { ...reproRun(), toolResults: [{ command: 'node --test test/math.test.js', status: 'failed', exitCode: 1 }] };
+  const ev4 = evaluateResult(reproTask(), toolFail);
+  assert.equal(ev4.verdict, 'failure');
+  assert.ok(ev4.reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+});
+
+test('annotated failed check on implement/verify/review tasks still fails; evidence_only investigation has typed refs', () => {
+  // Same annotated result, wrong kind -> marker is inert.
+  for (const kind of ['implement', 'verify', 'review']) {
+    const t = newTask({ id: `k-${kind}`, title: kind, kind, goal: 'x',
+      artifact_type: kind === 'implement' ? 'code_change' : 'audit_report',
+      expected_outcome: 'evidence_or_change', assignedAgent: 'coder',
+      acceptance: ['reproduce the failing command', 'second criterion'] });
+    const ev = evaluateResult(t, reproRun());
+    assert.equal(ev.verdict, 'failure', `${kind} must not exempt the reproduction marker`);
+    assert.ok(ev.reasonCodes.includes('CONTRADICTORY_EVIDENCE'));
+  }
+  // evidence_only investigation keeps typed provenance refs for the failed reproduction.
+  const only = evaluateResult(reproTask(), reproRun());
+  assert.equal(only.verdict, 'success');
+  const ref = only.evidenceReferences.find(r => r.purpose === 'reproduction');
+  assert.equal(ref.result, 'fail');
+  assert.equal(ref.expected_result, 'fail');
+  assert.equal(ref.command, 'node --test test/math.test.js');
 });
 
 test('unlinked/self-claimed evidence and contradictory saved tools cannot pass', () => {

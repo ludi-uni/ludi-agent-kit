@@ -36,6 +36,8 @@ renders 状態/完了/自動判断/未解決/ユーザー判断が必要 in Japa
 | `evaluator.mjs` | Success only with status `completed`, a summary, required outputs present and every acceptance criterion `A<n>` met with evidence. |
 | `escalation.mjs` | Escalation gate (below). |
 | `policy.mjs` | Defaults <- `orchestration/decision-policy.json` <- `decision-policy.local.json` / `--policy`. |
+| `execution-manager.mjs` | After a bounded task run, one deterministic action: complete / extend / continue / split / reassign / retry / escalate / approval_required / stop. |
+| `review-policy.mjs` | Strict review-finding schema (severity info..blocking + `FINDING_CLASSES`), bounded repair/replan policy, `completionGate`. |
 | `orchestrator.mjs` | The loop, `dryRun`, `formatPlan`, `formatReport`. |
 | `api.mjs` | Start, resume, list, show and answer. CLI and the pi extension both call this. |
 
@@ -154,7 +156,38 @@ observer errors never interrupt execution.
 
 ## Tool-capable children (Phase 3)
 
-`execution: subagent` runs `pi --mode json -p` with `--tools` limited by `access` (filesystem, shell, git, network). Shell is `ludi_exec` in `adapters/pi/shell-gate`, which refuses push, publish, deploy, reset, and recursive delete before the process runs. `--apply` still uses the old pipeline. With no subagent launcher, `subagent` falls back to the one-shot invoker. A child id, tool count, and turn count are stored on the run trace. Runtime, tool-call, and turn caps are `agent_runtime` in the decision policy. Only `MODEL_FAILURE` and `BACKEND_LIMIT` move up the routing ladder; a failing test retries the same capability with the previous attempt in the contract.
+`execution: subagent` launches a tool-capable child. In the pi-hosted orchestrator
+(`extensions/ludi-orchestrator`) the child runs **natively in-process** via
+`adapters/pi/lib/native-subagent.mjs`: each invocation registers a uniquely named
+runtime agent (`pi-subagents:runtime-agent-register:v1`) carrying the agent's system
+prompt, the access-derived tool allowlist plus a hidden `ludi_guard` sentinel, and a
+generated guard extension enforcing the initial turn/tool caps at `turn_start`
+(before provider work) and with sticky `tool_call` blocks (no adapter-local
+progress extension — parent-owned budgets still grant continuation). The child is
+then delegated through the `prompt-template:subagent:*` foreground contract with the
+pinned model, `context:'fresh'`, `skill:false`, `intercomBridge:{mode:'off'}` and a
+hard tool budget. If the pi-subagents owner is absent, the host picks the `pi --mode
+json -p` subprocess launcher once — only before native dispatch — and records
+`transportFallback: 'no-native-owner'`; after dispatch, cancel or failure the
+native verdict is final for the task (never a silent fallback, rerun, or model
+candidate advance). The CLI (`scripts/orchestrate.mjs`) keeps the
+subprocess launcher unchanged. When a stop cannot be confirmed (cancel sent, no
+matching terminal within the bounded grace), the task returns an `unconfirmedStop`
+blocker. The workspace writer lease is released only after both the exact terminal
+and the required child guard's quiescence proof (`shutdown:true`, `pendingTools:0`).
+The native owner can hard-finish a cancelled session before a tool settles, so a terminal
+alone is not enough. Missing/stale guard evidence also retains the lease. Native shell
+execution waits for owned process/tree termination rather than treating kill grace expiry
+as completion. Before native writer dispatch the generic lease is quarantined, so even
+owner-process death does **not** permit automatic recovery: orphan shell processes may
+survive the host. An operator must stop/verify those processes and manually recover the
+specific registry entry. Restarting/reloading alone is not proof, and automation never
+clears that entry without confirmation. Only cooperating runtimes with the updated
+lease protocol honor this quarantine; it is not an OS sandbox. Private Promise state never reaches
+SQLite/task JSON. Temporary runtime agent identities do not inherit named role overrides;
+operator-wide model scopes/ceilings and the kit's routing still apply.
+
+In the subprocess path (`pi --mode json -p`) `--tools` is limited by `access` (filesystem, shell, git, network). Shell is `ludi_exec` in `adapters/pi/shell-gate`, which refuses push, publish, deploy, reset, and recursive delete before the process runs. `--apply` still uses the old pipeline. With no subagent launcher, `subagent` falls back to the one-shot invoker. A child id, tool count, and turn count are stored on the run trace. Runtime, tool-call, and turn caps are `agent_runtime` in the decision policy. Only `MODEL_FAILURE` and `BACKEND_LIMIT` move up the routing ladder; a failing test retries the same capability with the previous attempt in the contract.
 
 Shell commands must be single literal commands: command chaining, pipelines,
 redirection, expansion and script expressions are refused. Executable paths and
@@ -174,8 +207,24 @@ Dry-run prints mode, workspace, tools, model, dependencies, and acceptance, and 
 - An `ExternalProjectStore` implementation for Asana that maps tasks, sections and comments, is
   idempotent, and runs dry-run first. The run store stays separate from that project store.
 - An intake adapter that turns an Asana task into a request plus acceptance criteria.
-- A direct pi-subagents launcher. The current tool-capable child path uses `pi --mode json -p`;
-  `createPiInvoker` remains a synchronous fallback for one-shot and model-planning calls.
-- Parallel execution for one-shot invocations. Tool-capable children use asynchronous `spawn`,
-  while the one-shot invoker still uses `spawnSync`.
-- A reviewer severity schema and an acceptance rubric shared by all agents.
+- ~~A direct pi-subagents launcher.~~ Implemented for the Pi-hosted orchestrator as
+  `adapters/pi/lib/native-subagent.mjs` (runtime-agent registration + structured
+  delegation over `pi.events`; see “Tool-capable children”). The CLI path still uses
+  `pi --mode json -p`; `createPiInvoker` remains an asynchronous fallback for one-shot
+  and model-planning calls. [Native evidence](reports/native-launcher.md) records the
+  installed Pi/pi-subagents owner exercising reads, writes, gated shell, a turn cap and
+  caller abort with a local deterministic provider; no hosted-model billing was used.
+  Hermetic unit tests additionally exercise unconfirmed-stop lease retention.
+- ~~Parallel execution for one-shot invocations.~~ Implemented with asynchronous
+  `spawn` in `createPiInvoker`; existing concurrency limits and writer exclusion
+  are unchanged. Local-process barrier tests prove real overlap and independent
+  prompt lifetimes, without hosted-model calls; see [evidence](reports/oneshot-async.md).
+  Optional caller signals stop candidate advancement in the oneshot runner. This
+  does not add a new top-level cancel command or wire signals into every planner,
+  maintenance or legacy pipeline caller. Timeout/abort requests target the owned
+  CLI PID and wait for close, not an invented stop after a grace timer. It is not
+  an OS process-tree sandbox.
+- An acceptance rubric verified as shared by all agents. The review-finding severity/classification
+  schema already exists (`review-policy.mjs`, injected via the task contract's
+  `REVIEW_FINDING_CONTRACT` on review/verify/reverify tasks); what remains open is one common
+  acceptance rubric validated across every agent type.

@@ -53,9 +53,19 @@ node --test (Get-ChildItem tests -Filter '*.test.mjs' | ForEach-Object FullName)
 pwsh -NoProfile -File tests/test-sync-pi.ps1
 pwsh -NoProfile -File adapters/pi/sync-pi.ps1  # dry-run; inspect before -Apply
 pwsh -NoProfile -File scripts/check-environment.ps1
+node scripts/check-pi.mjs                      # offline isolated startup/RPC registration check
 ```
 
-`sync-pi.ps1` generates proposals in `adapters/pi/out/` by default; `-Apply` writes Junctions and a generated `AGENTS.md`, backing up conflicts. It never edits `settings.json`, `auth.json`, or model credentials. Other source-checkout examples:
+`scripts/check-pi.mjs` (native Windows + pwsh + installed Pi required) creates a temporary agent dir, populates it with `sync-pi.ps1 -Apply` (never `-ApplySettings`), starts the installed Pi in offline RPC mode (`--offline --no-mcp --no-session`), and verifies the `orchestrate` command, the three `skill:*` commands, their physical targets, zero messages/tokens/cost, and exactly the expected kit links plus one loop-guard extension entry — using an owned temp dir it deletes afterwards (`--keep-temp` retains it for inspection). The sync also refreshes the kit's gitignored `adapters/pi/out/` preview files; real user configuration is untouched. It sends no prompts and calls no model. Agent definitions are checked structurally against the kit; RPC does not expose the agent registry or extension hook counts, and the separate `pi-subagents` package is not installed or verified. Run it against an installed Pi with `node scripts/check-pi.mjs --json`; the unit tests in `tests/pi-startup.test.mjs` use mocks only and do not prove the live check passes.
+
+`sync-pi.ps1` generates proposals in `adapters/pi/out/` by default; `-Apply` writes Junctions and a generated `AGENTS.md`, backing up conflicts. It never edits `auth.json` or model credentials, and `settings.json` is modified only with the separate opt-in `-ApplySettings`: that merges resolved models into `subagents.agentOverrides.{scout,coder,visual,reviewer}` (`model`/`thinking` fields only, all other fields/roles/keys preserved), backs up the original byte-for-byte to `<AgentDir>/ludi-agent-kit/backup-*/settings.json`, verifies a JSON round-trip, and refuses if the file changed since the plan was captured — the check is advisory, not a kernel compare-and-swap, so don't edit settings while a sync run is in flight. Restart pi or `/reload` to pick up new agent models. Project settings or provider-scoped overrides may still take precedence; confirm the effective mapping with `/subagents-models`.
+
+```powershell
+pwsh -NoProfile -File adapters/pi/sync-pi.ps1                # inspect the proposal first
+pwsh -NoProfile -File adapters/pi/sync-pi.ps1 -ApplySettings # explicit opt-in: four role model overrides only
+```
+
+Other source-checkout examples:
 
 ```powershell
 node scripts/context-pack.mjs context-pack/examples/example-fix.md --json

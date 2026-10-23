@@ -55,9 +55,19 @@ node --test (Get-ChildItem tests -Filter '*.test.mjs' | ForEach-Object FullName)
 pwsh -NoProfile -File tests/test-sync-pi.ps1
 pwsh -NoProfile -File adapters/pi/sync-pi.ps1  # dry-run。-Apply の前に内容を確認
 pwsh -NoProfile -File scripts/check-environment.ps1
+node scripts/check-pi.mjs                      # オフライン隔離スタートアップ/RPC 登録チェック
 ```
 
-`sync-pi.ps1` は標準では提案を `adapters/pi/out/` に生成します。`-Apply` は Junction と `AGENTS.md` を作成し、競合をバックアップします。`settings.json`、`auth.json`、モデルの認証情報は変更しません。その他の例:
+`scripts/check-pi.mjs`（ネイティブ Windows + pwsh + インストール済み Pi が必要）は一時的なエージェントディレクトリを作成し、`sync-pi.ps1 -Apply`（`-ApplySettings` ではない）で展開してから、インストール済み Pi をオフライン RPC モード（`--offline --no-mcp --no-session`）で起動し、`orchestrate` コマンド・3 つの `skill:*` コマンド・物理ターゲット・メッセージ/トークン/コストがゼロであること、そして期待されるキットのリンクと loop-guard 拡張エントリが一意であることを、チェック自身が所有する一時ディレクトリを使って検証します（`--keep-temp` で検査用に残せます）。同期処理はキット内の `adapters/pi/out/`（gitignored）にあるプレビューも更新しますが、実ユーザー設定は変更しません。プロンプト送信やモデル呼び出しは一切行いません。エージェント定義はキットとの構造比較で検証します。RPC にはエージェントレジストリや拡張フック数を問い合わせる公開手段がなく、別パッケージの pi-subagents はこのチェックでは導入・検証しません。実機の Pi に対しては `node scripts/check-pi.mjs --json` で実行してください。`tests/pi-startup.test.mjs` のユニットテストはモックのみを使用し、実チェックの合格を証明するものではありません。
+
+`sync-pi.ps1` は標準では提案を `adapters/pi/out/` に生成します。`-Apply` は Junction と `AGENTS.md` を作成し、競合をバックアップします。`auth.json` とモデルの認証情報は変更しません。`settings.json` は別途明示する `-ApplySettings` を付けた場合のみ変更されます。解決したモデルを `subagents.agentOverrides.{scout,coder,visual,reviewer}` の `model`/`thinking` だけにマージし（その他のフィールド・ロール・キーは保持）、元ファイルを `<AgentDir>/ludi-agent-kit/backup-*/settings.json` にバイト単位でバックアップし、JSON ラウンドトリップを検証し、計画取得後にファイルが変更されていれば拒否します。これは楽観的な競合検出であり、カーネルの compare-and-swap ではないため、同期実行中に settings.json を編集しないでください。反映には pi の再起動または `/reload` が必要です。project 設定や provider 別 override が優先される場合もあるため、`/subagents-models` で実効値を確認してください。
+
+```powershell
+pwsh -NoProfile -File adapters/pi/sync-pi.ps1                # まず提案を確認
+pwsh -NoProfile -File adapters/pi/sync-pi.ps1 -ApplySettings # 明示した場合だけ4ロールのモデル設定を適用
+```
+
+その他の例:
 
 ```powershell
 node scripts/context-pack.mjs context-pack/examples/example-fix.md --json

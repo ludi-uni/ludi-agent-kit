@@ -25,7 +25,7 @@ Pi への導入で `pi-workflow`、`project-management`、`visual-verification` 
 
 - エージェントはモデル名ではなく **capability** を指定します。`routing/` がバックエンドを選び、`adapters/pi/` が Pi のプロバイダー・モデルに対応付けます。
 - [Context Pack](context-pack/SPEC.md) は、リポジトリ全体ではなく必要な情報をモデルへ渡す仕組みです。
-- `orchestration/` と `lib/orchestrator/` が計画・委譲・検証・実行履歴の保存を担当します。実行にはモデル利用枠を消費する場合があるため、先に[計画を確認](docs/getting-started.ja.md#実行する前に)してください。
+- `orchestration/` と `lib/orchestrator/` が計画・委譲・検証・実行履歴の保存を担当します。実行にはモデル利用枠を消費する場合があるため、先に[計画を確認](docs/getting-started.ja.md#実行する前に)してください。任意実行の `node scripts/check-pi.mjs` では、`orchestrate` コマンド・3 つの Skill の実行時登録と、エージェント定義・loop-guard 拡張の配置を確認できます（使い捨ての隔離エージェントディレクトリ内でオフライン検証し、モデル呼び出しや実設定への書き込みは行いません）。
 - `rules/`、`skills/`、`agents/`、`routing/`、`context-pack/` は共通の知識です。具体的なプロバイダーやインストール先の設定は `adapters/<backend>/` に置きます。
 
 対応範囲と制限は [roadmap（英語）](docs/roadmap.md)、外部ツールの条件は [third-party dependencies（英語）](docs/third-party.md) を参照してください。このリポジトリは MIT ライセンスです（[LICENSE](LICENSE)）。

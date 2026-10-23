@@ -109,7 +109,7 @@ export async function runPiSubagent(req, { piEntry = locatePiEntry(), spawnImpl 
   const checkpointAfter = (checkpoint, files) => ({ successCount: successfulTools.length, files: new Set([...checkpoint.files, ...files]) });
   const child = {
     taskId: req.taskId ?? null, runId: req.runId ?? null, childSessionId, agent: req.agent ?? null,
-    modelId: req.modelId, backend: req.backend ?? null, startedAt, finishedAt: null, status: 'running',
+    modelId: req.modelId, backend: req.backend ?? null, startedAt, finishedAt: null, status: 'running', transport: 'subprocess',
     toolCalls: 0, turns: 0, lastProgressTurn: null, lastProgressToolCall: null, uniqueFilesInspected: 0, toolNames: {}, extensionsGranted: 0, toolExtensionsGranted: 0, initialTurns, finalTurnLimit: initialTurns, finalToolLimit: toolCap, stopReason: null,
   };
   // Runtime telemetry keeps command fingerprints, not full shell payloads.

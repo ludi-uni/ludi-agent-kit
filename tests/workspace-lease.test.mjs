@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fork } from 'node:child_process';
+import { fork, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,6 +33,26 @@ function holder(t, workspace, lockDir) {
   t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill(); await exited; });
   return { child, exited, message: nextMessage(child) };
 }
+
+test('a quarantined native lease is released only by its owner proof', t => {
+  const { workspace, lockDir } = setup(t);
+  const lease = acquireWorkspaceLease(workspace, { lockDir });
+  lease.quarantine();
+  assert.throws(() => acquireWorkspaceLease(workspace, { lockDir }), { code: 'WORKSPACE_BUSY' });
+  lease.release();
+  acquireWorkspaceLease(workspace, { lockDir }).release();
+});
+
+test('a dead native owner does not permit automatic recovery of its quarantined lease', t => {
+  const { workspace, lockDir } = setup(t);
+  const script = `import {acquireWorkspaceLease} from ${JSON.stringify(new URL('../lib/orchestrator/workspace-lease.mjs', import.meta.url).href)};
+const lease=acquireWorkspaceLease(${JSON.stringify(workspace)},{lockDir:${JSON.stringify(lockDir)}});
+lease.quarantine();process.exit(0);`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(child.status, 0, child.stderr);
+  assert.throws(() => acquireWorkspaceLease(workspace, { lockDir }), error =>
+    error.code === 'WORKSPACE_BUSY' && /automatic recovery is disabled/.test(error.message));
+});
 
 test('workspace aliases/subdirectories share ownership; other workspaces do not', t => {
   const { root, workspace, lockDir } = setup(t);

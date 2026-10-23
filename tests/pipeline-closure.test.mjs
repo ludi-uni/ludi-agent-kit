@@ -6,7 +6,7 @@ import childProcess, { spawnSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadRouting } from '../lib/routing.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { toMarkdown } from '../lib/context-pack.mjs';
@@ -76,11 +76,25 @@ test('direct clean pipeline succeeds; dirty approval keeps existing keyed procee
 
 test('old CLI normal and dry-run paths reject dirty workspaces through the common gate', t => {
   const f = setup(t, { git: true, dirty: true }); const before = snapshot(f.repo);
+  const env = { ...process.env, PI_CODING_AGENT_DIR: join(f.root, 'empty-agent-dir') };
+  delete env.LUDI_PI_ENTRY;
+  // Fail deterministically if discovery is attempted, even when this host has Pi installed.
+  const guardPath = join(f.root, 'forbid-pi-discovery.mjs');
+  writeFileSync(guardPath, `import fs from 'node:fs';
+import { basename } from 'node:path';
+import { syncBuiltinESMExports } from 'node:module';
+const original = fs.existsSync;
+fs.existsSync = path => {
+  if (['pi', 'pi.cmd'].includes(basename(String(path)))) throw new Error('Pi discovery must not precede dirty gate');
+  return original(path);
+};
+syncBuiltinESMExports();`);
   for (const extra of [[], ['--dry-run']]) {
-    const result = spawnSync(process.execPath, [join(kit, 'scripts/run-pipeline.mjs'), '--repo', f.repo, '--task', 'fixture', '--out', f.outDir, '--pack', f.packPath, ...extra], {
-      cwd: kit, encoding: 'utf8', timeout: 20000, env: { ...process.env, PI_CODING_AGENT_DIR: join(f.root, 'empty-agent-dir') },
+    const result = spawnSync(process.execPath, ['--import', pathToFileURL(guardPath).href, join(kit, 'scripts/run-pipeline.mjs'), '--repo', f.repo, '--task', 'fixture', '--out', f.outDir, '--pack', f.packPath, ...extra], {
+      cwd: kit, encoding: 'utf8', timeout: 20000, env,
     });
     assert.equal(result.status, 1, result.stderr);
+    assert.ok(result.stdout.trim(), result.stderr);
     const report = JSON.parse(result.stdout); assert.equal(report.failureClass, 'USER_DECISION_REQUIRED');
     assert.equal(existsSync(f.outDir), false); assert.deepEqual(snapshot(f.repo), before);
   }

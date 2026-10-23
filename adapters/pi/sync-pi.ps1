@@ -5,20 +5,32 @@
 
 .DESCRIPTION
   Composes the generated AGENTS.md, plans Junctions for skills/agents/extensions, and
-  renders an MCP proposal. Without -Apply nothing outside the repository is written:
-  all generated content goes to adapters/pi/out/ (gitignored) and a plan is printed.
+  renders an MCP proposal. Without -Apply/-ApplySettings nothing outside the repository
+  is written: all generated content goes to adapters/pi/out/ (gitignored) and a plan is printed.
 
   With -Apply, only these operations are performed against -AgentDir:
     * write AGENTS.md          (existing file is backed up to <AgentDir>/ludi-agent-kit/backup-*/)
     * create Junctions          skills/<name>, agents/ludi-agent-kit, extensions/ludi-agent-kit, extensions/ludi-orchestrator
-  settings.json, auth.json, models.json, mcp.json, sessions are NEVER modified.
-  Existing entries that are not Junctions pointing at this kit stop the run unless
-  -BackupConflicts is given (they are moved into the backup directory, never deleted).
+
+  With -ApplySettings (explicit opt-in, independent of -Apply), only settings.json is
+  modified: the resolved models are merged into subagents.agentOverrides for the four
+  kit roles (scout, coder, visual, reviewer), model + optional thinking fields only.
+  All other settings keys, override fields and roles are preserved. The original file is
+  backed up byte-for-byte to <AgentDir>/ludi-agent-kit/backup-*/settings.json first, the
+  merged JSON is verified by a serialize/parse round-trip, and the apply REFUSES if the
+  file changed (edited, created or removed) since the plan was captured. The concurrency
+  check is advisory for non-cooperating external editors — it is not a kernel
+  compare-and-swap — but a same-name .lock sidecar serializes concurrent kit applies.
+  auth.json, models.json, mcp.json, sessions are NEVER modified, and settings.json is
+  modified ONLY under -ApplySettings. Existing entries that are not Junctions pointing
+  at this kit stop the run unless -BackupConflicts is given (they are moved into the
+  backup directory, never deleted); link conflicts are checked before any settings write.
 #>
 [CmdletBinding()]
 param(
     [string]$AgentDir,
     [switch]$Apply,
+    [switch]$ApplySettings,
     [switch]$BackupConflicts
 )
 Set-StrictMode -Version Latest
@@ -63,10 +75,22 @@ foreach ($p in $catalog.servers.PSObject.Properties) {
 }
 ($mcp | ConvertTo-Json -Depth 10) | Set-Content (Join-Path $out 'mcp.proposal.json') -Encoding utf8NoBOM
 
-# ---- models: resolve every capability through routing + pi model map (report only) ----
-# resolve-capabilities writes out/capabilities.resolved.json and out/settings.proposal.json (models.json + models.local.json)
-$resolved = & node (Join-Path $kit 'scripts/resolve-capabilities.mjs') --live-settings (Join-Path $AgentDir 'settings.json')
-if ($LASTEXITCODE -ne 0) { throw 'Capability resolution failed; check adapters/pi/models*.json.' }
+# ---- settings snapshot BEFORE resolution (digest + presence only; contents never leave) ----
+# resolve-capabilities reads user bindings via PI_CODING_AGENT_DIR; scope that env to the
+# resolver invocation only so -AgentDir (fixture or real) determines the user-level file.
+$settingsPath = Join-Path $AgentDir 'settings.json'
+$settingsSnap = [ordered]@{ path = $settingsPath; exists = Test-Path -LiteralPath $settingsPath; sha256 = $null }
+if ($settingsSnap.exists) { $settingsSnap.sha256 = (Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash.ToLowerInvariant() }
+$prevAgentDirEnv = $env:PI_CODING_AGENT_DIR
+$env:PI_CODING_AGENT_DIR = $AgentDir
+try {
+    # ---- models: resolve every capability through routing + pi model map (report only) ----
+    # resolve-capabilities writes out/capabilities.resolved.json and out/settings.proposal.json
+    $resolved = & node (Join-Path $kit 'scripts/resolve-capabilities.mjs') --live-settings $settingsPath
+    if ($LASTEXITCODE -ne 0) { throw 'Capability resolution failed; check adapters/pi/models*.json.' }
+} finally {
+    if ($null -eq $prevAgentDirEnv) { Remove-Item Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:PI_CODING_AGENT_DIR = $prevAgentDirEnv }
+}
 
 # ---- diff plan against the live agent dir (read-only) ----
 $plan = [Collections.Generic.List[object]]::new()
@@ -86,7 +110,6 @@ $agentsState = if (-not (Test-Path -LiteralPath $agentsPath)) { 'create' }
     else { 'conflict-existing' }
 $plan.Add([pscustomobject]@{ entry = 'AGENTS.md'; target = (Join-Path $out 'AGENTS.md'); state = $agentsState })
 
-$settingsPath = Join-Path $AgentDir 'settings.json'
 $settingsNotes = @()
 if (Test-Path -LiteralPath $settingsPath) {
     $live = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json -AsHashtable
@@ -100,22 +123,70 @@ if (Test-Path -LiteralPath $settingsPath) {
 }
 
 $report = [ordered]@{
-    mode = if ($Apply) { 'apply' } else { 'dry-run' }
+    mode = if ($Apply -or $ApplySettings) { 'apply' } else { 'dry-run' }
     agentDir = $AgentDir
     outDir = $out
     plan = $plan
+    settingsApply = [ordered]@{
+        requested = [bool]$ApplySettings
+        allowedPath = $settingsPath
+        scope = 'subagents.agentOverrides.{scout,coder,visual,reviewer}.{model,thinking} only'
+        snapshotExists = $settingsSnap.exists
+        snapshotSha256 = $settingsSnap.sha256
+    }
     settingsDifferences = $settingsNotes
-    neverTouched = @('settings.json', 'auth.json', 'models.json', 'models-store.json', 'mcp.json', 'sessions/')
+    neverTouched = @('auth.json', 'models.json', 'models-store.json', 'mcp.json', 'sessions/') + $(if ($ApplySettings) { @() } else { @('settings.json') })
 }
 $report | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $out 'plan.json') -Encoding utf8NoBOM
 $plan | Format-Table -AutoSize | Out-String | Write-Output
 if ($settingsNotes) { $settingsNotes | ForEach-Object { Write-Output "note: $_" } }
+Write-Output ("settings: " + $(if ($ApplySettings) { "ApplySettings requested for $settingsPath (roles only; backup + verified replace)" } else { 'untouched (proposal in out/settings.proposal.json; opt in with -ApplySettings)' }))
 
-if (-not $Apply) { Write-Output "DRY-RUN complete. Generated files in $out. Re-run with -Apply to create Junctions/AGENTS.md in $AgentDir."; return }
+if (-not $Apply -and -not $ApplySettings) { Write-Output "DRY-RUN complete. Generated files in $out. Re-run with -Apply to create Junctions/AGENTS.md and/or -ApplySettings to merge role models into settings.json in $AgentDir."; return }
 
-# ---- apply (bounded) ----
+# ---- apply (bounded): link/AGENTS preflight runs before ANY settings mutation ----
 $conflicts = @($plan | Where-Object { $_.state -like 'conflict-*' })
-if ($conflicts.Count -and -not $BackupConflicts) { throw "Conflicts present; review plan and re-run with -BackupConflicts to move them into a backup directory:`n$($conflicts | Out-String)" }
+if ($Apply -and $conflicts.Count -and -not $BackupConflicts) { throw "Conflicts present; review plan and re-run with -BackupConflicts to move them into a backup directory:`n$($conflicts | Out-String)" }
+
+if ($ApplySettings) {
+    $applyHelper = Join-Path $PSScriptRoot 'lib/settings-apply.mjs'
+    $snapJson = ($settingsSnap | ConvertTo-Json -Compress)
+    # Use this resolver invocation's stdout, never the shared out/settings.proposal.json:
+    # concurrent syncs for different AgentDirs may overwrite that preview artifact.
+    $proposalJson = (($resolved | ConvertFrom-Json).settingsProposal.proposal | ConvertTo-Json -Depth 30 -Compress)
+    $nodeScript = @'
+const snap = JSON.parse(process.env.LUDI_SETTINGS_SNAP);
+const proposal = JSON.parse(process.env.LUDI_SETTINGS_PROPOSAL_JSON);
+const { pathToFileURL } = await import('node:url');
+const { applySettingsOverrides, extractRoleOverrides } = await import(pathToFileURL(process.env.LUDI_SETTINGS_HELPER).href);
+const r = applySettingsOverrides({ ...snap, release() {} }, extractRoleOverrides(proposal));
+process.stdout.write(JSON.stringify(r) + '\n');
+'@
+    $scopedEnv = @{
+        LUDI_SETTINGS_SNAP = $snapJson
+        LUDI_SETTINGS_PROPOSAL_JSON = $proposalJson
+        LUDI_SETTINGS_HELPER = ([IO.FileInfo]$applyHelper).FullName -replace '\\', '/'
+    }
+    $previousEnv = @{}
+    foreach ($name in $scopedEnv.Keys) {
+        $previousEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, $scopedEnv[$name], 'Process')
+    }
+    try {
+        $applyResult = & node --input-type=module -e $nodeScript
+        if ($LASTEXITCODE -ne 0) { throw 'settings apply failed (refused or errored); inspect the diagnostic above. No rollback overwrites concurrent changes.' }
+        $r = $applyResult | ConvertFrom-Json
+        $report.settingsApply['result'] = $r
+        $report | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $out 'plan.json') -Encoding utf8NoBOM
+        if ($r.changed) { Write-Output ("settings applied: roles [$($r.roles -join ', ')] merged into $settingsPath" + $(if ($r.backupPath) { " (backup: $($r.backupPath))" } else { ' (new file; no prior backup)' })) }
+        else { Write-Output 'settings unchanged (no semantic diff); no backup written.' }
+    } finally {
+        foreach ($name in $previousEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $previousEnv[$name], 'Process') }
+    }
+}
+
+if (-not $Apply) { Write-Output 'APPLY-SETTINGS complete. Restart pi or /reload for the new agent models to take effect.'; return }
+
 $backup = Join-Path $AgentDir ('ludi-agent-kit/backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 foreach ($entry in $plan) {
     if ($entry.state -eq 'ok') { continue }
@@ -134,4 +205,3 @@ foreach ($entry in $plan) {
     Write-Output "applied $($entry.entry)"
 }
 Write-Output "APPLY complete. Restart pi or /reload."
-

@@ -21,6 +21,7 @@ async function _importsFn() {
     _imports = {
       invoke: await import(pathToFileURL(resolve(kitRoot, 'adapters/pi/lib/invoke.mjs')).href),
       subagent: await import(pathToFileURL(resolve(kitRoot, 'adapters/pi/lib/subagent.mjs')).href),
+      native: await import(pathToFileURL(resolve(kitRoot, 'adapters/pi/lib/native-subagent.mjs')).href),
       api: await import(pathToFileURL(resolve(kitRoot, 'lib/orchestrator/api.mjs')).href),
     };
   }
@@ -36,9 +37,24 @@ function text(body) {
 }
 
 export default function orchestratorExtension(pi) {
+  // Native in-process child launcher (pi-subagents runtime-agent + structured
+  // delegation). Created lazily on the first subagent task; disposed with the
+  // session so active exact identities are cancelled and no stale pi/ctx
+  // references survive a reload.
+  let _native = null;
+  const nativeRunner = async () => {
+    if (!_native && pi?.events) {
+      const { createNativeSubagentRunner } = (await _importsFn()).native;
+      _native = createNativeSubagentRunner({ pi });
+    }
+    return _native;
+  };
+  const disposeNative = () => { try { _native?.dispose(); } catch { /* best-effort shutdown */ } _native = null; };
+  pi.on('session_shutdown', disposeNative);
+
   // The pi session id is AUTHORITATIVE for clientContext kind 'pi-web'. A caller
   // may not claim a different session — mismatch is rejected before any run starts.
-  const run = async (action, params, executionCtx = null, onProgress = null) => {
+  const run = async (action, params, executionCtx = null, onProgress = null, signal = null) => {
     const root = kitPath();
     const im = await _importsFn();
     const { loadOrchestrationContext, listOrchestrationRuns, showRun, formatReport, formatRunList, defaultStorePath, pendingDecisions, createRunHealth, createRunRunner, startOrchestration, resumeOrchestration, answerOrchestration, parseOlderThan, pruneOrchestrationRuns, deleteOrchestrationRun, clearOrchestrationRuns, previewRunCleanup, formatCleanup } = im.api;
@@ -90,8 +106,24 @@ export default function orchestratorExtension(pi) {
         return formatCleanup(clearOrchestrationRuns(ctx, { force: !!params.force, includeActive: !!params.includeActive }), { verb: '削除' });
       }
       const health = createRunHealth(ctx);
-      const invoke = createPiInvoker();
-      const runner = createRunRunner(ctx, { invoke, runSubagent: createPiSubagentRunner(), repoRoot: params.repo || null, apply: false, health,
+      // Lazy: the synchronous one-shot invoker must not fail native dispatch just
+      // because the pi CLI entry is not on PATH.
+      let _invoker = null;
+      const invoke = req => (_invoker ??= createPiInvoker())(req);
+      // Native first inside this host; subprocess only when the pi-subagents
+      // owner is absent BEFORE native dispatch (recorded via transportFallback).
+      // After native admission there is never a fallback.
+      const subprocess = createPiSubagentRunner();
+      const runSubagent = im.native.createHostSubagentRunner({
+        // Propagate the tool's abort signal; runners ignore it when unsupported.
+        native: async req => {
+          const runner = await nativeRunner();
+          if (!runner) return { ok: false, unavailable: true, error: 'pi event bus unavailable; native runner not created' };
+          return runner.runSubagent({ ...req, signal: req.signal ?? signal });
+        },
+        subprocess: async req => subprocess({ ...req, signal: req.signal ?? signal }),
+      });
+      const runner = createRunRunner(ctx, { invoke, runSubagent, repoRoot: params.repo || null, apply: false, health,
         runId: ['resume', 'answer'].includes(action) ? params.runId : null });
       if (action === 'answer') {
         answerOrchestration(ctx, { runId: params.runId, decisionId: params.decisionId, answer: params.answer });
@@ -147,12 +179,12 @@ export default function orchestratorExtension(pi) {
       store: Type.Optional(Type.String({ description: 'Override path to the orchestration sqlite file' })),
       clientContext: Type.Optional(Type.Object({ kind: Type.String(), sessionId: Type.Optional(Type.String()) }, { description: 'Client binding request; pi-web session UUID is obtained from the current pi session' })),
     }),
-    async execute(_id, params, _signal, onUpdate, ctx) {
+    async execute(_id, params, signal, onUpdate, ctx) {
       const updates = [];
       try { return text(await run(params.action || 'list', params, ctx, message => {
         updates.push(message);
         onUpdate?.(text(updates.slice(-12).join('\n')));
-      })); }
+      }, signal)); }
       catch (e) { return text(`orchestration error: ${e.message}`); }
     },
   });

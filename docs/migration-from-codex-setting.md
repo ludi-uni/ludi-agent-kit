@@ -26,8 +26,8 @@ and as the current provider of the `~/.pi/agent` Junctions on this machine.
 ### Re-implemented rather than copied
 | codex-setting | reason | kit replacement |
 | --- | --- | --- |
-| `scripts/install-pi.ps1`, `migrate-pi-harness.ps1`, `activate-pi-harness.ps1` | coupled to codex-setting layout, Codex AGENTS projection, PATH/pi-web edits | `adapters/pi/sync-pi.ps1` (dry-run default, no settings/PATH writes) |
-| `scripts/check-pi.ps1/.mjs`, `tests/test-pi-*.{ps1,mjs}` | read `codex-settings/pi.json` state | `tests/test-sync-pi.ps1`; RPC startup check deferred |
+| `scripts/install-pi.ps1`, `migrate-pi-harness.ps1`, `activate-pi-harness.ps1` | coupled to codex-setting layout, Codex AGENTS projection, PATH/pi-web edits | `adapters/pi/sync-pi.ps1` (dry-run default, no PATH writes; settings only with explicit `-ApplySettings`) |
+| `scripts/check-pi.ps1/.mjs`, `tests/test-pi-*.{ps1,mjs}` | read `codex-settings/pi.json` state | `tests/test-sync-pi.ps1` + `scripts/check-pi.mjs` (isolated offline RPC startup check; see roadmap item 5) |
 | `pi/agents/{main,coder,vision,reviewer}.md` | hardcoded `model: swe-2-high` | `agents/{scout,coder,visual,reviewer}.md` with `capability` |
 | `pi/README.md`, `HARNESS-DESIGN.md`, `VALIDATION.md` | historical | `docs/` |
 

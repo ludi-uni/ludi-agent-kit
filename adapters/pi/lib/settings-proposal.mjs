@@ -30,5 +30,5 @@ export function buildSettingsProposal(resolved, { liveSettings = null } = {}) {
       else diff.push({ agent: name, change: 'same' });
     }
   }
-  return { proposal, notes, diff, target: '~/.pi/agent/settings.json (subagents.agentOverrides) — merge manually or with a future -Apply; never written by the kit' };
+  return { proposal, notes, diff, target: '<AgentDir>/settings.json (subagents.agentOverrides) — merge manually or via sync-pi.ps1 -ApplySettings (opt-in, backed up); written only on explicit opt-in' };
 }

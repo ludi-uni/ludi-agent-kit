@@ -34,7 +34,7 @@ node scripts/validate.mjs
 node scripts/orchestrate.mjs --dry-run "Fix the failing test"
 ```
 
-The default rules-based preview does not launch agents. For a live run, read the [execution modes and safety rules](docs/orchestrator.md) first; `--apply` permits the coder pipeline to edit the selected repository. Persistent runs can be inspected with `node scripts/orchestrate.mjs --list` and `--show <run-id>`. Source-checkout requirements and the full local test command are in [Getting started](docs/getting-started.md#source-checkout).
+The default rules-based preview does not launch agents. For a live run, read the [execution modes and safety rules](docs/orchestrator.md) first; `--apply` permits the coder pipeline to edit the selected repository. An optional `node scripts/check-pi.mjs` verifies — offline, inside a throwaway agent dir populated by `sync-pi.ps1 -Apply`, with no model calls and no writes to your real Pi configuration — the live registration of the kit's `orchestrate` command and three skills, plus the structural installation of the agent definitions and a single loop-guard extension entry (see [Getting started](docs/getting-started.md#source-checkout) for its exact scope and limits). Persistent runs can be inspected with `node scripts/orchestrate.mjs --list` and `--show <run-id>`. Source-checkout requirements and the full local test command are in [Getting started](docs/getting-started.md#source-checkout).
 
 ## How the pieces connect
 

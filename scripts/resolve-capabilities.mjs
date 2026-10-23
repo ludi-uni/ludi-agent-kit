@@ -29,12 +29,21 @@ if (adapter === 'pi' && !only) {
   const { buildSettingsProposal } = await import('../adapters/pi/lib/settings-proposal.mjs');
   const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent');
   const livePath = opt('live-settings', join(agentDir, 'settings.json'));
-  const live = existsSync(livePath) ? JSON.parse(readFileSync(livePath, 'utf8')) : null;
+  let live = null;
+  if (existsSync(livePath)) {
+    try { live = JSON.parse(readFileSync(livePath, 'utf8')); }
+    catch { console.error('Live settings could not be parsed; refusing to resolve against it.'); process.exit(1); }
+    const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!object(live) || (live.subagents !== undefined && !object(live.subagents))
+      || (live.subagents?.agentOverrides !== undefined && !object(live.subagents.agentOverrides))) {
+      console.error('Live settings and subagents/agentOverrides must be JSON objects.'); process.exit(1);
+    }
+  }
   const proposal = buildSettingsProposal(out.agents, { liveSettings: live });
   const outDir = join(adapterDir, 'out');
   mkdirSync(outDir, { recursive: true });
   writeFileSync(join(outDir, 'settings.proposal.json'), JSON.stringify(proposal.proposal, null, 2) + '\n');
   writeFileSync(join(outDir, 'capabilities.resolved.json'), JSON.stringify(out, null, 2) + '\n');
-  out.settingsProposal = { file: join(outDir, 'settings.proposal.json'), diffAgainst: live ? livePath : null, diff: proposal.diff, notes: proposal.notes, target: proposal.target };
+  out.settingsProposal = { file: join(outDir, 'settings.proposal.json'), proposal: proposal.proposal, diffAgainst: live ? livePath : null, diff: proposal.diff, notes: proposal.notes, target: proposal.target };
 }
 console.log(JSON.stringify(out, null, 2));

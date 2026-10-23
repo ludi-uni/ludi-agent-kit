@@ -53,6 +53,8 @@ if (flag('dry-run')) {
   process.exit(0);
 }
 
-const summary = await runPipeline({ repoRoot: repo, task, routing, registry, agents, invoke: createPiInvoker(), outDir, maxAttempts, packPath: opt('pack', null) });
+// Resolve the pi CLI lazily so a dirty workspace is rejected before any discovery error.
+let invoke;
+const summary = await runPipeline({ repoRoot: repo, task, routing, registry, agents, invoke: (...a) => (invoke ??= createPiInvoker())(...a), outDir, maxAttempts, packPath: opt('pack', null) });
 console.log(JSON.stringify({ outcome: summary.outcome, failureClass: summary.failureClass, error: summary.error, decision: summary.decision, gate: summary.gate, attempts: summary.attempts, escalated: summary.escalated, escalationCandidate: summary.escalationCandidate, applied: summary.applied, contextPack: summary.contextPack, steps: summary.steps.map(s => ({ step: s.step, attempt: s.attempt, backend: s.backend, modelId: s.modelId, ok: s.ok, reason: s.reason, durationMs: s.durationMs })), trace: summary.outcome === 'worktree-dirty' ? null : join(outDir, 'trace.json') }, null, 2));
 process.exitCode = summary.outcome === 'success' ? 0 : 1;

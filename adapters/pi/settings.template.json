@@ -1,5 +1,5 @@
 {
-  "$comment": "Template fragment. sync-pi.ps1 never writes settings.json; it only reports the diff between this fragment and the live file. Model/provider stay user-owned.",
+  "$comment": "Template fragment. sync-pi.ps1 only reports the diff between this fragment and the live file; it never applies these keys. With the explicit opt-in -ApplySettings it merges ONLY subagents.agentOverrides.{scout,coder,visual,reviewer}.{model,thinking} into settings.json (byte-for-byte backup + verified replace). Model/provider stay user-owned.",
   "defaultTools": ["read", "powershell", "edit", "write"],
   "enableSkillCommands": true,
   "defaultProjectTrust": "ask",
