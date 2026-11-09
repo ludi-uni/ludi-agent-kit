@@ -200,7 +200,7 @@ test('string decision from an agent becomes a pending question instead of aborti
 });
 
 test('shell refusal examples persist as pending questions, preserving command and safety flags', async () => {
-  for (const command of ['git branch --show-current', 'git push origin "a quoted branch"']) {
+  for (const command of ['git branch new-branch', 'git push origin "a quoted branch"']) {
     const denial = decideShell(command, { shell: 'limited' });
     assert.equal(denial.allow, false);
     const guidance = formatShellRefusal(command, denial);

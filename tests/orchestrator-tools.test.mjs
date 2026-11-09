@@ -164,6 +164,28 @@ test('safe shell is allowed and dangerous shell becomes a user decision', () => 
   assert.ok(ev.decisions[0].flags.includes('external_publish'));
 });
 
+test('limited shell permits only the read-only current-branch form', () => {
+  for (const command of [
+    'git branch --show-current',
+    'git.exe branch --show-current',
+    'git --no-pager branch --show-current',
+    'git -C "fixture repo" branch --show-current',
+  ]) assert.equal(decideShell(command, { shell: 'limited' }).allow, true, command);
+  for (const command of [
+    'git branch',
+    'git branch new-branch',
+    'git branch -d existing',
+    'git branch -D existing',
+    'git branch -m renamed',
+    'git branch --show-current new-branch',
+    'git branch --show-current -D existing',
+    'git branch --show-current; git branch -D existing',
+    'git branch --show-current > branch.txt',
+    'git -c alias.branch=push branch --show-current',
+  ]) assert.equal(decideShell(command, { shell: 'limited' }).allow, false, command);
+  assert.equal(decideShell('git branch --show-current', { shell: 'false' }).allow, false);
+});
+
 test('shell gate refuses compound commands, expansion and unrelated safe-delete tokens', () => {
   const denied = [
     'Get-Content README.md; Set-Content ../outside.txt changed',
