@@ -60,7 +60,7 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
 }
 
 $resolvedOutputPath = [IO.Path]::GetFullPath($OutputPath)
-Assert-OutputAvailable -Path $resolvedOutputPath -Overwrite:$Overwrite
+Assert-OutputAvailable -Path $resolvedOutputPath -Overwrite:$Overwrite -OverwriteHint '-Overwrite'
 
 $invariantCulture = [Globalization.CultureInfo]::InvariantCulture
 $intervalText = $Interval.ToString('G17', $invariantCulture)

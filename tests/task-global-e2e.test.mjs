@@ -20,7 +20,10 @@ const registry = { version: 1, backends: {
   codex: { provider: 'codex', model: 'quota-0' },
 } };
 const policy = mergePolicy(DEFAULT_POLICY, { limits: { max_retries: 3, model_attempts_per_task: 2, max_total_attempts_per_task: 4 } });
-const task = { id: 't1', title: 'fixture', goal: 'complete fixture', agent: 'scout', dependencies: [], acceptance: ['done'] };
+// Pin cheap-code explicitly: this E2E verifies the mechanism (cheap protocol
+// failures stay excluded on strong-code), independent of the shipped scout
+// capability default in agents/scout.md.
+const task = { id: 't1', title: 'fixture', goal: 'complete fixture', agent: 'scout', capability: 'cheap-code', dependencies: [], acceptance: ['done'] };
 
 test('Codex quota 0 E2E: cheap protocol failures remain excluded on strong-code; three invocations and pipeline continues', async () => {
   const calls = [];

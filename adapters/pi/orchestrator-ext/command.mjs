@@ -7,7 +7,10 @@ export function parseOrchestrateCommand(args) {
   }
   if (cmd === 'resume') return { action: cmd, params: { runId: parts[1] } };
   if (cmd === 'answer') return { action: cmd, params: { runId: parts[1], decisionId: parts[2], answer: parts.slice(3).join(' ') } };
-  if (cmd === 'prune') return { action: cmd, params: { olderThan: parts[1] } };
+  if (cmd === 'prune') {
+    const rest = parts.slice(1);
+    return { action: cmd, params: { olderThan: rest.find(p => !p.startsWith('--')), force: rest.includes('--force') && !rest.includes('--dry-run') } };
+  }
   if (cmd === 'delete') return { action: cmd, params: { runId: parts[1], force: parts.includes('--force') } };
   if (cmd === 'clear') return { action: cmd, params: { force: parts.includes('--force'), includeActive: parts.includes('--include-active') } };
   return { action: 'start', params: { request: parts.join(' ') } };

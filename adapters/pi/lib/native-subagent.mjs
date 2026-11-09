@@ -25,7 +25,7 @@
 // An absent owner is reported pre-dispatch (`unavailable: true`) so the host may
 // choose the subprocess launcher once. There is NO fallback after dispatch,
 // after cancel, or after failure — anything else is terminal.
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, watch } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, watch, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -143,7 +143,7 @@ function terminalResult(response, req, child) {
   // Post-admission: every failure is terminal — abort, never a model retry.
   const failureClass =
     status === 'timed_out' ? 'TIMEOUT'
-    : status === 'tool_budget_exhausted' ? 'TIMEOUT'
+    : status === 'tool_budget_exhausted' ? 'TOOL_BUDGET_EXHAUSTED'
     : status === 'structured_output_failed' ? 'MALFORMED_RESULT'
     : 'UNKNOWN';
   const out = { ok: false, abort: true, error: error ?? `native delegation ${status}`, failureClass };
@@ -382,7 +382,7 @@ export function createNativeSubagentRunner({ pi, cancelGraceMs = CANCEL_GRACE_MS
     const request = {
       requestId, ownerRunId, nodeId,
       agent: agentName,
-      task: req.prompt,
+      task: `${req.prompt}\n\nNATIVE_HANDOFF_BOUNDS\nHard limits: ${maxToolCalls} tool calls, ${maxTurns} turns. Whichever limit comes first applies. Reserve the final allowed turn for the final JSON result. When 3 turns remain or before the last 5 tool calls, stop exploration/new implementation and finalize from collected evidence. If work remains, return status partial, distinguishing verified work, failed/unverified checks and the next smallest task; never disguise unmet acceptance as completed. A warning is not extra budget. Automatic rules/native continuation is limited to read-only scout investigations with validated handoff evidence; a writer partial is saved for parent assessment, not automatically resumed or extended.\nContext Pack specification (outside the workspace): ${resolve(__dir, '../../../context-pack/SPEC.md')}. Read this exact path if needed; do not search the workspace for it.`,
       context: 'fresh',
       cwd: req.cwd,
       model: requestedModel,
@@ -455,6 +455,16 @@ export function createNativeSubagentRunner({ pi, cancelGraceMs = CANCEL_GRACE_MS
     }
     const guardStop = typeof quiet.reason === 'string' ? quiet : null;
     child.guardQuiescent = true;
+    child.terminalStatus = terminal.status;
+    child.cancelRequested = attempt.cancelled || signal?.aborted === true || disposed;
+    // Snapshot only this launch's fixed guard-owned file, before temp cleanup.
+    // It is evidence, never an accepted result. Do not follow model-supplied paths.
+    let savedOutput;
+    try {
+      const info = lstatSync(`${sidecarPath}.output`);
+      if (info.isFile() && !info.isSymbolicLink() && info.size <= 1024 * 1024)
+        savedOutput = readFileSync(`${sidecarPath}.output`, 'utf8');
+    } catch { /* no final snapshot available */ }
     releaseAttempt(attempt);
     child.finishedAt = new Date().toISOString();
     child.status = terminal.status === 'completed' ? 'finished' : 'failed';
@@ -498,7 +508,13 @@ export function createNativeSubagentRunner({ pi, cancelGraceMs = CANCEL_GRACE_MS
       mapped.abort = true;
       child.status = 'failed';
       mapped.error = `native child stopped by launch guard (${guardStop.reason}); result not accepted`;
-      mapped.failureClass = guardStop.reason === 'tool-not-allowed' ? 'TOOL_FAILURE' : 'TIMEOUT';
+      mapped.failureClass = guardStop.reason === 'tool-not-allowed' ? 'TOOL_FAILURE'
+        : guardStop.reason === 'tool-call-limit' ? 'TOOL_BUDGET_EXHAUSTED' : 'TIMEOUT';
+    }
+    if (!mapped.ok) {
+      const text = savedOutput ?? (terminal.result?.kind === 'text' && typeof terminal.result.text === 'string'
+        && Buffer.byteLength(terminal.result.text, 'utf8') <= 1024 * 1024 ? terminal.result.text : undefined);
+      if (text?.trim()) mapped.partialHandoff = { status: 'unaccepted', source: savedOutput != null ? 'native-guard' : 'native-response', text };
     }
     if (terminal.status !== 'completed' && !child.stopReason) child.stopReason = terminal.status;
     return { ...mapped, transport: 'native', child,

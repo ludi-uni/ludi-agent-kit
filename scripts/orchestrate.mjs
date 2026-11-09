@@ -7,10 +7,11 @@
 //   node scripts/orchestrate.mjs --decisions [--resume <run-id>] [--store <db>]
 //   node scripts/orchestrate.mjs --show <run-id> [--store <db>]
 //   node scripts/orchestrate.mjs --resume <run-id> [--answer <decision-id> "<text>"] [--store <db>] [--repo <dir>] [--apply]
-//   node scripts/orchestrate.mjs --prune [--older-than 7d] [--store <db>]        # delete terminal run history
+//   node scripts/orchestrate.mjs --prune [--older-than 7d] [--force] [--store <db>]  # preview, or delete terminal run history with --force
 //   node scripts/orchestrate.mjs --delete <run-id> [--force] [--store <db>]     # preview, or delete with --force
 //   node scripts/orchestrate.mjs --clear [--force] [--include-active] [--store <db>]  # preview, or delete with --force
-// --dry-run plans and routes only. A real run is stored under .orchestration/state.db (or --store / LUDI_ORCHESTRATION_STORE).
+// --dry-run plans and routes only; on cleanup modes it always previews even combined with --force.
+// A real run is stored under .orchestration/state.db (or --store / LUDI_ORCHESTRATION_STORE).
 // Cleanup touches terminal runs only (completed/failed/cancelled with no pending decisions); --include-active
 // additionally removes running/waiting_for_user runs that have no pending decisions. Global decision memory,
 // protocol stats and global backend health are never deleted.
@@ -47,14 +48,14 @@ for (let i = 0; i < args.length; i++) {
 const cleanupMode = !!(opts.prune || opts.delete || opts.clear);
 const request = opts.request ?? (opts.resume || opts.list || opts.decisions || opts.show || cleanupMode ? '' : positional.join(' '));
 const storePath = resolve(opts.store ?? defaultStorePath(kit));
-const usage = 'usage: orchestrate.mjs [--dry-run] [--planner rules|model|adaptive] [--repo dir] [--apply] [--policy file] [--store db] [--out dir] [--json] [--trace] "<request>" | --list [--status] | --decisions [--resume id] | --show id | --resume id [--answer decision-id text] | --prune [--older-than 7d] | --delete id [--force] | --clear [--force] [--include-active]';
+const usage = 'usage: orchestrate.mjs [--dry-run] [--planner rules|model|adaptive] [--repo dir] [--apply] [--policy file] [--store db] [--out dir] [--json] [--trace] "<request>" | --list [--status] | --decisions [--resume id] | --show id | --resume id [--answer decision-id text] | --prune [--older-than 7d] [--force] | --delete id [--force] | --clear [--force] [--include-active]';
 if (!request && !opts.resume && !opts.list && !opts.decisions && !opts.show && !cleanupMode) { console.error(usage); process.exit(2); }
 // Cleanup flag validation.
 const cleanupFlags = [opts.prune && '--prune', opts.delete && '--delete', opts.clear && '--clear'].filter(Boolean);
 if (cleanupFlags.length > 1) { console.error(`cleanup modes are exclusive: ${cleanupFlags.join(' ')}`); process.exit(2); }
 if (opts['older-than'] && !opts.prune) { console.error('--older-than requires --prune'); process.exit(2); }
 if (opts['include-active'] && !opts.clear) { console.error('--include-active requires --clear'); process.exit(2); }
-if (opts.force && !opts.delete && !opts.clear) { console.error('--force requires --delete or --clear'); process.exit(2); }
+if (opts.force && !opts.prune && !opts.delete && !opts.clear) { console.error('--force requires --prune, --delete or --clear'); process.exit(2); }
 let olderThanMs = null;
 if (opts['older-than']) {
   try { olderThanMs = parseOlderThan(opts['older-than']); }
@@ -98,10 +99,9 @@ if (opts['dry-run'] && !cleanupMode) {
       console.log(opts.json ? JSON.stringify(shown, null, 2) : formatReport(shown));
     } else if (opts.prune) {
       try {
-        const result = opts['dry-run']
-          ? previewRunCleanup(ctx, { olderThan: new Date(Date.now() - (olderThanMs ?? 7 * 86_400_000)).toISOString() })
-          : pruneOrchestrationRuns(ctx, { olderThanMs });
-        console.log(opts.json ? JSON.stringify(result, null, 2) : formatCleanup(result, { verb: '削除', hint: '--prune' }));
+        // Default is a read-only preview; --dry-run previews even with --force.
+        const result = pruneOrchestrationRuns(ctx, { olderThanMs, force: !!opts.force && !opts['dry-run'] });
+        console.log(opts.json ? JSON.stringify(result, null, 2) : formatCleanup(result, { verb: '削除', hint: '--force' }));
       } catch (e) { console.error(`整理できません: ${e.message}`); process.exitCode = 1; }
     } else if (opts.delete) {
       const id = opts.delete === true ? positional[0] : opts.delete;

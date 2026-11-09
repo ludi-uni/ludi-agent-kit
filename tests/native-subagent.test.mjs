@@ -84,6 +84,9 @@ test('happy path: registers a guarded runtime agent, dispatches exact tuple, ret
   assert.equal(sent.skill, false);
   assert.deepEqual(sent.intercomBridge, { mode: 'off' });
   assert.deepEqual(sent.toolBudget, { hard: 7, block: '*' });
+  assert.match(sent.task, /Reserve the final allowed turn for the final JSON result/);
+  assert.match(sent.task, /When 3 turns remain or before the last 5 tool calls/);
+  assert.match(sent.task, /a writer partial is saved for parent assessment/);
   const reg = pi.registrations[0];
   assert.ok(reg.name.startsWith('ludi-coder-'));
   assert.deepEqual(reg.definition.tools, ['read', 'ludi_exec', GUARD_TOOL]);
@@ -105,6 +108,102 @@ test('happy path: registers a guarded runtime agent, dispatches exact tuple, ret
   assert.equal(out.child.turns, 3);
   assert.equal(out.child.toolCalls, 2);
   assert.equal(out.child.childSessionId, 'native-run-1');
+});
+
+test('tool-budget stop preserves guard snapshot without accepting completed claim or falling back', async t => {
+  const pi = fakePi();
+  const native = createNativeSubagentRunner({ pi, cancelGraceMs: 20 });
+  t.after(() => native.dispose());
+  const workspace = mkdtempSync(join(tmpdir(), 'ludi-native-partial-'));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  let dispatches = 0;
+  const agent = createAgentRunner({ repoRoot: workspace, agents, routing, registry: REG,
+    invoke: async () => { throw new Error('oneshot forbidden'); }, runSubagent: async req => {
+      dispatches++;
+      const promise = native.runSubagent(req); await tick();
+      const sent = sentRequests(pi).at(-1);
+      assert.match(sent.task, /NATIVE_HANDOFF_BOUNDS/);
+      assert.ok(sent.task.includes(resolve(kit, 'context-pack/SPEC.md')));
+      writeFileSync(`${guardConfig(pi, sent).sidecarPath}.output`, DONE);
+      // Installed owner does not project finalOutput on non-completed statuses.
+      pi.events.emit(DELEGATION_RESPONSE_EVENT, terminalFor(sent, { status: 'tool_budget_exhausted', result: undefined }));
+      return promise;
+    } });
+  const out = await agent.run({ id: 'a', assignedAgent: 'scout', capability: 'cheap-code', title: 'inspect', goal: 'inspect',
+    kind: 'investigate', dependencies: [], acceptance: ['inspect'], outputs: [] }, { dependencyResults: [], runId: 'r1' });
+  assert.equal(dispatches, 1);
+  assert.equal(out.ok, false);
+  assert.equal(out.abort, true);
+  assert.equal(out.failureClass, 'TOOL_BUDGET_EXHAUSTED');
+  assert.equal(out.child.guardQuiescent, true);
+  assert.equal(out.child.terminalStatus, 'tool_budget_exhausted');
+  assert.equal(out.result.status, 'partial');
+  assert.equal(out.partialHandoff.claimedStatus, 'completed');
+  assert.equal(out.partialHandoff.status, 'unaccepted');
+  assert.equal(out.partialHandoff.text, DONE);
+});
+
+test('rules residual launcher receives only unused cumulative allowance without local extension', async t => {
+  const workspace = mkdtempSync(join(tmpdir(), 'ludi-native-residual-'));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  let calls = 0;
+  const agent = createAgentRunner({ repoRoot: workspace, agents, routing, registry: REG,
+    invoke: async () => { throw new Error('oneshot forbidden'); }, runSubagent: async req => {
+      calls++;
+      assert.equal(req.limits.max_tool_calls, 3);
+      assert.equal(req.limits.max_turns, 2);
+      assert.equal(req.limits.max_tool_extensions, 0);
+      assert.equal(req.limits.max_extensions, 0);
+      return { ok: true, text: DONE, terminal: true, transport: 'native', child: {} };
+    } });
+  const out = await agent.run({ id: 'a.c1', assignedAgent: 'scout', capability: 'cheap-code', title: 'inspect residual', goal: 'inspect residual',
+    kind: 'investigate', dependencies: [], acceptance: ['inspect'], outputs: [],
+    rulesContinuation: { maxTurns: 48, turnsUsed: 46, maxTools: 80, toolCallsUsed: 77 } }, { dependencyResults: [], runId: 'r1' });
+  assert.equal(calls, 1);
+  assert.equal(out.ok, true);
+});
+
+test('normal partial text remains a successful transport outcome, unlike a hard-stop result', async t => {
+  const pi = fakePi();
+  const native = createNativeSubagentRunner({ pi, cancelGraceMs: 20 });
+  t.after(() => native.dispose());
+  const promise = native.runSubagent(reqBase()); await tick();
+  const sent = sentRequests(pi)[0];
+  const text = '```json\n' + JSON.stringify({ status: 'partial', summary: 'verified work saved; compile check remains' }) + '\n```';
+  pi.events.emit(DELEGATION_RESPONSE_EVENT, terminalFor(sent, { result: { kind: 'text', text } }));
+  const result = await promise;
+  assert.equal(result.ok, true);
+  assert.equal(result.text, text);
+  assert.equal(result.abort, undefined);
+  assert.equal(result.partialHandoff, undefined);
+  assert.equal(result.child.guardQuiescent, true);
+});
+
+test('guard warns before hard limit and snapshots only bounded final assistant text', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ludi-guard-handoff-'));
+  try {
+    const handlers = {};
+    const path = join(dir, 'state.json');
+    createNativeGuard({ maxTurns: 5, maxToolCalls: 7, allowedTools: ['read'], sidecarPath: path })({
+      on: (name, fn) => { handlers[name] = fn; }, registerTool() {},
+    });
+    const ctx = { abort() { throw new Error('warning must not abort'); } };
+    handlers.tool_call({ toolName: 'read', toolCallId: 'a' }, ctx);
+    assert.equal(handlers.tool_result({ toolCallId: 'a', content: [{ type: 'text', text: 'file' }] }), undefined);
+    handlers.tool_call({ toolName: 'read', toolCallId: 'b' }, ctx);
+    const warning = handlers.tool_result({ toolCallId: 'b', content: [{ type: 'text', text: 'evidence' }] });
+    assert.equal(warning.content[0].text, 'evidence');
+    assert.match(warning.content[1].text, /LUDI_HANDOFF.*2\/7/);
+    handlers.message_end({ message: { role: 'assistant', content: [{ type: 'text', text: DONE }] } });
+    assert.equal(readFileSync(`${path}.output`, 'utf8'), DONE);
+    // A later tool-use message invalidates any older apparent final answer.
+    handlers.message_end({ message: { role: 'assistant', content: [{ type: 'toolCall', name: 'read' }] } });
+    assert.throws(() => readFileSync(`${path}.output`), { code: 'ENOENT' });
+    handlers.message_end({ message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(1024 * 1024 + 1) }] } });
+    assert.throws(() => readFileSync(`${path}.output`), { code: 'ENOENT' });
+    handlers.message_end({ message: { role: 'toolResult', content: [{ type: 'text', text: DONE }] } });
+    assert.throws(() => readFileSync(`${path}.output`), { code: 'ENOENT' });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('absent owner (no result) reports unavailable pre-dispatch; host may pick subprocess once', async () => {
@@ -364,6 +463,10 @@ test('guard stop metadata overrides a nominally completed native terminal', asyn
   assert.equal(result.failureClass, 'TIMEOUT');
   assert.equal(result.child.status, 'failed');
   assert.equal(result.child.stopReason, 'guard-turn-limit');
+  assert.equal(result.child.guardQuiescent, true);
+  assert.equal(result.text, undefined);
+  assert.equal(result.partialHandoff.status, 'unaccepted');
+  assert.equal(result.partialHandoff.text, DONE);
 });
 
 test('opaque model IDs with colon tags retain their exact model and thinking', async () => {

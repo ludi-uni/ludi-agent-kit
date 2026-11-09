@@ -15,6 +15,10 @@ import { newTask } from '../lib/orchestrator/task-store.mjs';
 import { classifyBackendFailure, createHealthMonitor } from '../lib/orchestrator/health.mjs';
 import { evaluateDecision } from '../lib/orchestrator/escalation.mjs';
 import { orchestrate } from '../lib/orchestrator/orchestrator.mjs';
+import { decideShell } from '../lib/orchestrator/shell-policy.mjs';
+import { buildTaskContract } from '../lib/orchestrator/contract.mjs';
+import { parseStructuredResult } from '../lib/orchestrator/runner.mjs';
+import { formatShellRefusal } from '../adapters/pi/shell-gate/refusal.mjs';
 import { loadOrchestrationContext, startOrchestration } from '../lib/orchestrator/api.mjs';
 
 const kit = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -193,6 +197,34 @@ test('string decision from an agent becomes a pending question instead of aborti
     assert.equal(r.escalations[0].question, question);
     assert.equal(session.getDecision(r.escalations[0].id).question, question);
   } finally { session.close(); }
+});
+
+test('shell refusal examples persist as pending questions, preserving command and safety flags', async () => {
+  for (const command of ['git branch --show-current', 'git push origin "a quoted branch"']) {
+    const denial = decideShell(command, { shell: 'limited' });
+    assert.equal(denial.allow, false);
+    const guidance = formatShellRefusal(command, denial);
+    assert.match(guidance, /Do not run or retry/);
+    const example = JSON.parse(guidance.slice(guidance.indexOf('\n') + 1));
+    assert.equal(example.decisions[0].command, command);
+    assert.ok(example.decisions[0].question.trim());
+    assert.deepEqual(example.decisions[0].flags ?? [], denial.flags ?? []);
+    const parsed = parseStructuredResult('```json\n' + JSON.stringify(example) + '\n```');
+    assert.equal(parsed.structured, true);
+    const session = openStore(dbPath());
+    try {
+      const r = await orchestrate({ request: 'investigate', plan: [spec('a', 'scout')], agents, routing, registry: REG, policy: DEFAULT_POLICY, session,
+        runner: { async run() { return { ok: true, ...parsed }; } } });
+      assert.equal(r.runStatus, 'waiting_for_user');
+      assert.equal(r.tasks[0].status, 'waiting_for_user');
+      const persisted = session.getDecision(r.escalations[0].id);
+      assert.equal(persisted.question, example.decisions[0].question);
+      assert.deepEqual(persisted.flags, denial.flags ?? []);
+    } finally { session.close(); }
+  }
+  const contract = buildTaskContract(spec('a', 'scout'));
+  assert.match(contract, /Each decisions entry MUST be an object with a non-empty string question/);
+  assert.match(contract, /A command or summary alone is not a valid decision request/);
 });
 
 test('invalid decision request fails only its task, without aborting the run', async () => {

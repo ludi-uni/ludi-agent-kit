@@ -187,7 +187,38 @@ lease protocol honor this quarantine; it is not an OS sandbox. Private Promise s
 SQLite/task JSON. Temporary runtime agent identities do not inherit named role overrides;
 operator-wide model scopes/ceilings and the kit's routing still apply.
 
-In the subprocess path (`pi --mode json -p`) `--tools` is limited by `access` (filesystem, shell, git, network). Shell is `ludi_exec` in `adapters/pi/shell-gate`, which refuses push, publish, deploy, reset, and recursive delete before the process runs. `--apply` still uses the old pipeline. With no subagent launcher, `subagent` falls back to the one-shot invoker. A child id, tool count, and turn count are stored on the run trace. Runtime, tool-call, and turn caps are `agent_runtime` in the decision policy. Only `MODEL_FAILURE` and `BACKEND_LIMIT` move up the routing ladder; a failing test retries the same capability with the previous attempt in the contract.
+native guardは、残り3 turnまたはtool上限の5回手前から、`tool_result` に
+現在turn・残りturn（観測できる場合）を含む `LUDI_HANDOFF` を追加する。
+`turn_start` の戻り値では警告しない。promptでも最後の許可turnを最終JSON用に確保し、
+検証済み成果・失敗／未検証項目・次の最小残件を区別した `partial` を要求する。
+toolを使わないturnではこの警告は配信されないため、上限内の完了を保証するものではない。
+hard turn/tool上限は変更しない。正常なnative writer partialも受入や全scope再試行にはせず、
+管理された継続経路がない場合は未受入として保存し、親の評価待ちで停止する。
+rules/native の読み取り専用 `scout` 調査では、`progressReport` を含む引継ぎを
+後述の有限継続条件で評価する。
+`TOOL_BUDGET_EXHAUSTED` は wall-clock の `TIMEOUT` と区別される。
+停止後の最終テキストは専用guardで最大1 MiBまで回収し、SQLiteのtask payload内の
+`partialHandoff` に `status: unaccepted` と所在を保存する。保存は受入ではなく、
+hard stop後の自己申告 `completed` から後続実装を開始しない。
+
+同じ調査を無条件で再試行することはない。確実なterminal＋guard停止証拠、明示的な
+`partial` report、具体的な証拠と新しい進捗、有限の残件が揃う場合だけ、親が別taskの
+residual continuationを作る。元の受入条件と同一モデル経路を維持し、深さ3、run内生成数、
+累積のturn/tool絶対上限と実invocation上限を超えない。cancel、停止未確認、判断待ち、
+反復進捗、writer taskにはこの経路を適用しない。元taskと引継ぎ成果は未受入のまま残し、
+後続の完了は通常の親評価を必要とする。subprocessへのpost-admission fallbackも行わない。
+
+In the subprocess path (`pi --mode json -p`) `--tools` is limited by `access` (filesystem, shell, git, network). Shell is `ludi_exec` in `adapters/pi/shell-gate`, which refuses push, publish, deploy, reset, and recursive delete before the process runs.
+
+Direct pi-subagents launches (`subagent({agent:'coder'})`, `/subagents`, chained
+children) bypass the kit launcher, and pi-subagents' `tools:` frontmatter is a
+strict allowlist that never interprets `access:`. For those, `sync-pi.ps1`
+generates derived profiles in `adapters/pi/out/agent-profiles/` (the
+`agents/ludi-agent-kit` Junction target): only the approved `coder`/`tester`
+worker roles get `ludi_exec` plus `subagentOnlyExtensions` pointing at a
+generated provider that binds `createShellGate` to the role's immutable
+policy; all other roles keep their authored `tools`/frontmatter verbatim and
+gain no provider. Raw `powershell`/`bash` is never granted there either. `--apply` still uses the old pipeline. With no subagent launcher, `subagent` falls back to the one-shot invoker. A child id, tool count, and turn count are stored on the run trace. Runtime, tool-call, and turn caps are `agent_runtime` in the decision policy. Only `MODEL_FAILURE` and `BACKEND_LIMIT` move up the routing ladder; a failing test retries the same capability with the previous attempt in the contract.
 
 Shell commands must be single literal commands: command chaining, pipelines,
 redirection, expansion and script expressions are refused. Executable paths and
@@ -197,7 +228,8 @@ Recursive deletion has
 no exception for build directories. This gate is not an OS sandbox: allowed tests
 and builds execute repository code, so use trusted workspaces.
 
-The CLI previews `--delete ID` unless `--force` is supplied. `--dry-run` always
+The CLI previews `--prune`, `--delete ID` and `--clear` unless `--force` is
+supplied; forced prune deletes only matching terminal runs. `--dry-run` always
 previews cleanup, even when combined with `--force`.
 
 Dry-run prints mode, workspace, tools, model, dependencies, and acceptance, and does not start pi.

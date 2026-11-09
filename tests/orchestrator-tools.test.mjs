@@ -36,6 +36,11 @@ const REG = { version: 1, backends: {
 const json = obj => `note\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
 const done = { status: 'completed', summary: 'checked files', acceptance: [{ id: 'A1', met: true, evidence: 'read src' }] };
 const spec = (id, agent, dependencies = [], extra = {}) => ({ id, title: `task ${id}`, goal: `goal ${id}`, agent, dependencies, acceptance: ['done'], ...extra });
+// Mechanism tests below exercise retry/reassign/failure-class behaviour, not
+// the shipped agent defaults: pin cheap-code explicitly so a capability change
+// in agents/*.md cannot silently retarget these fixture chains. Shipped-default
+// coupling stays covered by the dry-run/dry contract tests in this file.
+const CHEAP = { capability: 'cheap-code' };
 
 test('tool capability is parsed separately from the pi tool-name list', () => {
   const scout = agents.find(a => a.meta.name === 'scout');
@@ -226,7 +231,7 @@ test('backend limit reassigns and the next attempt sees the previous failure', a
     agents, routing, registry: REG,
   });
   const result = await orchestrate({
-    request: 'r', plan: [spec('a', 'scout')], agents, routing, registry: REG, policy: DEFAULT_POLICY, runner,
+    request: 'r', plan: [spec('a', 'scout', [], CHEAP)], agents, routing, registry: REG, policy: DEFAULT_POLICY, runner,
   });
   assert.deepEqual(seen.map(s => s.capability), ['cheap-code', 'strong-code']);
   assert.match(seen[1].prompt, /BACKEND_LIMIT/);
@@ -243,7 +248,7 @@ test('test failure retries the same capability', async () => {
       return { ok: true, structured: true, result: { status: 'completed', summary: 'tests passed', acceptance: [{ id: 'A1', met: true, evidence: 'npm test' }], remainingIssues: [], decisions: [], newTasks: [], commandsRun: ['npm test'], verification: [{ command: 'npm test', result: 'pass' }] } };
     },
   };
-  const result = await orchestrate({ request: 'r', plan: [spec('a', 'tester')], agents, routing, registry: REG, policy: DEFAULT_POLICY, runner });
+  const result = await orchestrate({ request: 'r', plan: [spec('a', 'tester', [], CHEAP)], agents, routing, registry: REG, policy: DEFAULT_POLICY, runner });
   assert.deepEqual(caps, ['cheap-code', 'cheap-code']);
   assert.equal(result.status, 'completed');
 });
@@ -257,7 +262,7 @@ test('child session is stored on the trace and a completed task is not run again
     runSubagent: async () => { calls++; return { ok: true, text: json(done), child: { childSessionId: 'child-abc', toolCalls: 3, turns: 2 } }; },
     agents, routing, registry: REG,
   });
-  const first = await orchestrate({ request: 'look', plan: [spec('a', 'scout')], agents, routing, registry: REG, policy: DEFAULT_POLICY, runner, session });
+  const first = await orchestrate({ request: 'look', plan: [spec('a', 'scout', [], CHEAP)], agents, routing, registry: REG, policy: DEFAULT_POLICY, runner, session });
   assert.equal(calls, 1);
   assert.ok(session.loadTrace(first.runId).some(e => e.type === 'child' && e.childSessionId === 'child-abc'));
   session.close();

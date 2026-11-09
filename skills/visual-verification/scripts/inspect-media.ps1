@@ -68,6 +68,8 @@ if (-not (Test-Path -LiteralPath $inputPath -PathType Leaf)) {
 }
 
 $resolvedInput = [IO.Path]::GetFullPath($inputPath)
+$resolvedOutputJson = $null
+$outputJsonStream = $null
 if (-not [string]::IsNullOrWhiteSpace($OutputJson)) {
     $resolvedOutputJson = [IO.Path]::GetFullPath($OutputJson)
     $outputDirectory = Split-Path -Parent $resolvedOutputJson
@@ -77,14 +79,29 @@ if (-not [string]::IsNullOrWhiteSpace($OutputJson)) {
     if (Test-Path -LiteralPath $resolvedOutputJson) {
         throw "OutputJson already exists; refusing to overwrite: $resolvedOutputJson"
     }
+    # Reserve the output path with an exclusive create so a concurrently
+    # appearing file is never overwritten.
+    try {
+        $outputJsonStream = [IO.File]::Open($resolvedOutputJson, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    }
+    catch {
+        throw "OutputJson could not be exclusively created; refusing to overwrite: $resolvedOutputJson ($($_.Exception.Message))"
+    }
 }
 
+# Keep the reserved stream inside a try/finally so a failure below cannot
+# leak the handle or be mistaken for a successful write. The finally must
+# never delete by path: another process could create a different file at
+# $resolvedOutputJson after this reservation is released. A failed run
+# leaves the zero-byte reservation in place and warns with its location;
+# that file is not a successful output.
 try {
-    $ffprobeCommand = Get-Command ffprobe -ErrorAction Stop
-}
-catch {
-    throw 'ffprobe was not found on PATH.'
-}
+    try {
+        $ffprobeCommand = Get-Command ffprobe -ErrorAction Stop
+    }
+    catch {
+        throw 'ffprobe was not found on PATH.'
+    }
 
 if ($ffprobeCommand.CommandType -ne [System.Management.Automation.CommandTypes]::Application) {
     throw "ffprobe resolved to '$($ffprobeCommand.CommandType)', not an executable application."
@@ -130,9 +147,25 @@ $result = [pscustomobject]@{
     audio          = $audio
 }
 
-$json = $result | ConvertTo-Json -Depth 4
-if (-not [string]::IsNullOrWhiteSpace($OutputJson)) {
-    Set-Content -LiteralPath $resolvedOutputJson -Value $json -Encoding utf8NoBOM -NoNewline -ErrorAction Stop
-}
+    $json = $result | ConvertTo-Json -Depth 4
+    if ($null -ne $outputJsonStream) {
+        $jsonBytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+        $outputJsonStream.Write($jsonBytes, 0, $jsonBytes.Length)
+        $outputJsonStream.Flush($true)
+        $outputJsonStream.Dispose()
+        $outputJsonStream = $null
+    }
 
-Write-Output $json
+    Write-Output $json
+}
+finally {
+    if ($null -ne $outputJsonStream) {
+        $outputJsonStream.Dispose()
+        $outputJsonStream = $null
+        # Only the stream handle is released here. Deleting by path would
+        # race a concurrently created replacement file, so the zero-byte
+        # reservation is left in place and reported as a non-successful
+        # partial output instead.
+        Write-Warning "inspect-media failed before writing OutputJson; a non-successful partial output remains at: $resolvedOutputJson"
+    }
+}

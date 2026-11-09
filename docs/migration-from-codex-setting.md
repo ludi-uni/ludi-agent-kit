@@ -36,7 +36,11 @@ and as the current provider of the `~/.pi/agent` Junctions on this machine.
 1. `pwsh adapters/pi/sync-pi.ps1` — review `adapters/pi/out/plan.json`.
 2. `pwsh adapters/pi/sync-pi.ps1 -Apply -BackupConflicts` — re-points skill Junctions,
    writes generated AGENTS.md (old one backed up), adds `agents/ludi-agent-kit` and
-   `extensions/ludi-agent-kit`.
+   `extensions/ludi-agent-kit`. `agents/ludi-agent-kit` now targets the generated
+   `adapters/pi/out/agent-profiles/` (pi-subagents profiles derived from the common
+   agent definitions, with `ludi_exec` + policy-explicit shell-gate providers for
+   the approved coder/tester worker roles only); a Junction still pointing at `agents/` is a reported
+   conflict resolved by `-BackupConflicts`.
 3. Manually remove the old `agents` and `extensions/codex-settings` Junctions (link only)
    to avoid a duplicate loop guard.
 4. Restart pi; `pi` → `/reload`; confirm skills appear and the loop guard loads once.

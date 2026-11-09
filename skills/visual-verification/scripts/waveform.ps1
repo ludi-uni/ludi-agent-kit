@@ -12,7 +12,12 @@ param(
     [int]$Width = 1280,
     [int]$Height = 240,
     [double]$SilenceDb = -35,
-    [double]$MinSilenceSeconds = 0.2
+    [double]$MinSilenceSeconds = 0.2,
+    # Hard cap on the analysis window, in seconds. The waveform image and the
+    # event JSON are both produced from this same bounded window so their
+    # provenance stays consistent. Values <= 0 disable the cap.
+    [ValidateRange(0, 86400)]
+    [double]$MaxAnalysisSeconds = 300
 )
 
 Set-StrictMode -Version Latest
@@ -231,6 +236,9 @@ if ([double]::IsNaN($SilenceDb) -or [double]::IsInfinity($SilenceDb) -or $Silenc
 if ([double]::IsNaN($MinSilenceSeconds) -or [double]::IsInfinity($MinSilenceSeconds) -or $MinSilenceSeconds -lt 0.02 -or $MinSilenceSeconds -gt 30) {
     throw 'MinSilenceSeconds must be between 0.02 and 30 seconds.'
 }
+if ([double]::IsNaN($MaxAnalysisSeconds) -or [double]::IsInfinity($MaxAnalysisSeconds) -or $MaxAnalysisSeconds -lt 0 -or $MaxAnalysisSeconds -gt 86400) {
+    throw 'MaxAnalysisSeconds must be between 0 and 86400 seconds.'
+}
 
 $resolvedInput = [IO.Path]::GetFullPath($inputPath)
 $resolvedOutputPng = Resolve-NewOutputPath -Path $OutputPng -ExpectedExtension '.png' -ParameterName 'OutputPng'
@@ -247,7 +255,8 @@ $invariantCulture = [Globalization.CultureInfo]::InvariantCulture
 $sampleRate = 16000
 $windowMilliseconds = 20
 $windowSamples = [int]($sampleRate * $windowMilliseconds / 1000)
-$maximumAnalysisSeconds = 300
+$analysisWindowIsBounded = $MaxAnalysisSeconds -gt 0
+$maximumAnalysisSeconds = if ($analysisWindowIsBounded) { $MaxAnalysisSeconds } else { [double]::PositiveInfinity }
 $widthText = $Width.ToString($invariantCulture)
 $heightText = $Height.ToString($invariantCulture)
 $silenceDbText = $SilenceDb.ToString('G17', $invariantCulture)
@@ -269,8 +278,15 @@ try {
     $eventsStream = Open-NewOutputStream -Path $resolvedOutputEventsJson -ParameterName 'OutputEventsJson'
     $eventsReserved = $true
 
-    $waveformArguments = [string[]]@(
-        '-i', $resolvedInput,
+    $waveformArguments = [string[]]@()
+    if ($analysisWindowIsBounded) {
+        # '-t' before '-i' is honoured as an input duration limit for the
+        # showwavespic render, keeping the image on the same bounded window as
+        # the PCM/event analysis below.
+        $waveformArguments += [string[]]@('-t', $maximumAnalysisSeconds.ToString($invariantCulture))
+    }
+    $waveformArguments += [string[]]@('-i', $resolvedInput)
+    $waveformArguments += [string[]]@(
         '-filter_complex', "[0:a:0]aformat=channel_layouts=mono,showwavespic=s=${widthText}x${heightText}:colors=0x40c4ff[wave]",
         '-map', '[wave]',
         '-frames:v', '1',
@@ -294,10 +310,13 @@ try {
 
     $temporaryPcm = Join-Path $temporaryRoot ('waveform-' + [Guid]::NewGuid().ToString('N') + '.pcm')
 
-    $pcmArguments = [string[]]@(
-        '-i', $resolvedInput,
+    $pcmArguments = [string[]]@()
+    if ($analysisWindowIsBounded) {
+        $pcmArguments += [string[]]@('-t', $maximumAnalysisSeconds.ToString($invariantCulture))
+    }
+    $pcmArguments += [string[]]@('-i', $resolvedInput)
+    $pcmArguments += [string[]]@(
         '-map', '0:a:0',
-        '-t', $maximumAnalysisSeconds.ToString($invariantCulture),
         '-ac', '1',
         '-ar', $sampleRate.ToString($invariantCulture),
         '-f', 's16le',
@@ -311,6 +330,10 @@ try {
 
     $sampleCount = [int]($pcmBytes.Length / 2)
     $analysisDurationSeconds = $sampleCount / [double]$sampleRate
+    # Truncation cannot be determined from decoded length alone: a source that
+    # is exactly the limit length decodes to the same duration as a truncated
+    # longer source, so truncation is reported as a best-effort signal.
+    $analysisTruncated = $analysisWindowIsBounded -and $analysisDurationSeconds -ge ($maximumAnalysisSeconds - 0.0005)
     $events = [System.Collections.Generic.List[object]]::new()
     $active = $false
     $peakAmplitude = 0.0
@@ -370,10 +393,13 @@ try {
             })
     }
 
-    $silenceArguments = [string[]]@(
-        '-i', $resolvedInput,
+    $silenceArguments = [string[]]@()
+    if ($analysisWindowIsBounded) {
+        $silenceArguments += [string[]]@('-t', $maximumAnalysisSeconds.ToString($invariantCulture))
+    }
+    $silenceArguments += [string[]]@('-i', $resolvedInput)
+    $silenceArguments += [string[]]@(
         '-map', '0:a:0',
-        '-t', $maximumAnalysisSeconds.ToString($invariantCulture),
         '-af', "aformat=channel_layouts=mono,silencedetect=n=${silenceDbText}dB:d=${minSilenceText}",
         '-f', 'null', '-'
     )
@@ -393,6 +419,17 @@ try {
     $document = [pscustomobject]@{
         schema_version = 'agent-verification-lab.audio-events.v1'
         sample_rate    = $sampleRate
+        analysis       = [pscustomobject]@{
+            # Honest provenance: this is how much audio was actually decoded and
+            # analysed, not the source duration. The source may be longer.
+            analyzed_duration_sec     = [Math]::Round($analysisDurationSeconds, 6)
+            max_seconds               = if ($analysisWindowIsBounded) { [double]$maximumAnalysisSeconds } else { $null }
+            truncation_limit_reached  = [bool]$analysisTruncated
+            # Decoded length alone cannot distinguish an exact-length source
+            # from a truncated longer one; treat this as a signal, not a proof
+            # of the true source duration.
+            truncation_note           = if ($analysisTruncated) { 'Analysis reached the configured limit; the source may be longer. This does not prove the source duration.' } else { $null }
+        }
         events         = $sortedEvents
     }
     $stagingReadStream.CopyTo($outputPngStream)

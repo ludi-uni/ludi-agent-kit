@@ -26,6 +26,13 @@ const REG = { version: 1, backends: {
 const policyWith = over => mergePolicy(DEFAULT_POLICY, over ?? {});
 const jsonReply = obj => `notes\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
 const spec = (id, agent, dependencies = [], extra = {}) => ({ id, title: `task ${id}`, goal: `goal ${id}`, agent, dependencies, acceptance: ['done'], ...extra });
+// Mechanism tests pin the task capability explicitly (cheap-code -> strong-code
+// ladder) instead of relying on the shipped scout default. An explicit
+// spec.capability overrides only the model route (see router.routeTask), so the
+// fixture chains below stay valid no matter which capability agents/scout.md
+// ships with. The shipped binding itself is covered by the integration test at
+// the bottom and by kit.test.mjs fixed expectations.
+const CHEAP = { capability: 'cheap-code' };
 const run = ({ policy, ...o }) => orchestrate({ request: 'r', agents, routing, registry: REG, policy: policyWith(policy), ...o });
 const okReply = jsonReply({ status: 'completed', summary: 'done', acceptance: [{ id: 'A1', met: true, evidence: 'e' }] });
 
@@ -38,7 +45,7 @@ function scripted(mapper) {
 // A: MALFORMED_RESULT advances to the next candidate, not an infinite same-model retry.
 test('A: malformed result -> next candidate within the same attempt', async () => {
   const { calls, runner } = scripted({ '*': req => req.modelId.startsWith('pc/') ? 'Done' : okReply });
-  const r = await run({ plan: [spec('a', 'scout')], runner });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP)], runner });
   assert.equal(r.status, 'completed');
   assert.equal(r.tasks[0].attempts, 1);             // no wasted orchestrator retry
   assert.deepEqual(calls.map(c => c.modelId), ['pc/mc:low', 'pl/ml:off']);
@@ -48,7 +55,7 @@ test('A: malformed result -> next candidate within the same attempt', async () =
 test('B: turn-limit timeout with no tool progress -> next candidate', async () => {
   assert.equal(isProtocolFailure('TIMEOUT', { child: { toolCalls: 0 } }), true);
   const { calls, runner } = scripted({ '*': req => req.modelId.startsWith('pc/') ? { ok: false, error: 'turn limit 12', failureClass: 'TIMEOUT', child: { toolCalls: 0 } } : okReply });
-  const r = await run({ plan: [spec('a', 'scout')], runner });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP)], runner });
   assert.equal(r.status, 'completed');
   assert.deepEqual(calls.map(c => c.modelId), ['pc/mc:low', 'pl/ml:off']);
 });
@@ -57,7 +64,7 @@ test('B: turn-limit timeout with no tool progress -> next candidate', async () =
 test('C: empty response -> next candidate', async () => {
   assert.equal(classifyRun({ error: 'empty model response' }), 'EMPTY_RESPONSE');
   const { calls, runner } = scripted({ '*': req => req.modelId.startsWith('pc/') ? { ok: false, error: 'empty model response', failureClass: 'EMPTY_RESPONSE' } : okReply });
-  const r = await run({ plan: [spec('a', 'scout')], runner });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP)], runner });
   assert.equal(r.status, 'completed');
   assert.deepEqual(calls.map(c => c.modelId), ['pc/mc:low', 'pl/ml:off']);
 });
@@ -67,7 +74,7 @@ test('D: cheap candidates exhausted by protocol failures -> escalate to strong-c
   // Every candidate fails protocol on the FIRST pass; on escalation to strong-code
   // the codex candidate (px/mx, strong-only) succeeds.
   const { calls, runner } = scripted({ '*': req => req.modelId.startsWith('px/') ? okReply : 'Done' });
-  const r = await run({ plan: [spec('a', 'scout')], runner, policy: { limits: { max_retries: 4, model_attempts_per_task: 3, max_total_attempts_per_task: 8 } } });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP)], runner, policy: { limits: { max_retries: 4, model_attempts_per_task: 3, max_total_attempts_per_task: 8 } } });
   assert.equal(r.status, 'completed');
   assert.ok(calls.some(c => c.modelId === 'px/mx:high'), 'reached a strong-code-only candidate');
   assert.ok(r.tasks[0].capability === 'strong-code' || r.autoDecisions.some(d => /escalate to strong-code/.test(d.choice)));
@@ -79,7 +86,7 @@ test('E: recoverable failure keeps the same model retryable', async () => {
   const { calls, runner } = scripted({ '*': () => (++n === 1
     ? jsonReply({ status: 'failed', summary: 'tests failed', acceptance: [{ id: 'A1', met: false, evidence: 'x' }] })
     : okReply) });
-  const r = await run({ plan: [spec('a', 'scout')], runner });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP)], runner });
   assert.equal(r.status, 'completed');
   assert.equal(r.tasks[0].attempts, 2);                       // a real retry happened
   assert.deepEqual(calls.map(c => c.modelId), ['pc/mc:low', 'pc/mc:low']); // same model retried
@@ -88,7 +95,7 @@ test('E: recoverable failure keeps the same model retryable', async () => {
 // F: a different candidate is reached before the per-task attempt budget is spent.
 test('F: candidate progression happens before maxAttempts is exhausted', async () => {
   const { calls, runner } = scripted({ '*': req => req.modelId.startsWith('pc/') ? 'Done' : okReply });
-  const r = await run({ plan: [spec('a', 'scout')], runner });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP)], runner });
   assert.equal(r.status, 'completed');
   assert.ok(calls.length >= 2 && calls[0].modelId !== calls[1].modelId, 'tried a different candidate');
 });
@@ -96,7 +103,7 @@ test('F: candidate progression happens before maxAttempts is exhausted', async (
 // G: every candidate fails -> task ultimately fails.
 test('G: all candidates fail -> task failed', async () => {
   const { runner } = scripted({ '*': () => 'Done' });
-  const r = await run({ plan: [spec('a', 'scout')], runner, policy: { limits: { max_retries: 2, model_attempts_per_task: 3, max_total_attempts_per_task: 4 } } });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP)], runner, policy: { limits: { max_retries: 2, model_attempts_per_task: 3, max_total_attempts_per_task: 4 } } });
   assert.equal(r.tasks[0].status, 'failed');
   assert.equal(r.status, 'incomplete');
 });
@@ -113,8 +120,41 @@ test('telemetry: malformed/empty/turn_limit/structured_ok are counted per model'
   const calls = [];
   const invoke = createScriptedInvoker({ '*': req => req.modelId.startsWith('pc/') ? 'Done' : okReply }, calls);
   const runner = createAgentRunner({ invoke, agents, routing, registry: REG, session });
-  const r = await run({ plan: [spec('a', 'scout')], runner });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP)], runner });
   assert.equal(r.status, 'completed');
   assert.ok(recorded.includes('pc/mc:malformed'), `malformed recorded: ${recorded}`);
   assert.ok(recorded.includes('pl/ml:structured_ok'), `structured_ok recorded: ${recorded}`);
+});
+
+// ---------- shipped-config coupling ----------
+// Small read-only integration checks: the mechanism tests above are decoupled
+// from the shipped scout default, but these verify the SHIPPED definition is
+// still honoured end-to-end. If agents/scout.md ever flips to strong-code the
+// mechanism tests keep passing unchanged while this block — plus the fixed
+// 'scout->cheap-code' entry in kit.test.mjs — keeps the shipping contract
+// observable. routeTask must also not mutate the loaded agent definition.
+test('integration: shipped scout default drives routing; explicit override wins', async () => {
+  const scout = agents.find(a => a.meta.name === 'scout');
+  const shippedDefault = scout.meta.capability; // recorded, not re-asserted: kit.test.mjs pins the exact value
+
+  // (1) A task with NO explicit capability follows the shipped role default.
+  const { calls: calls1, runner: runner1 } = scripted({ '*': okReply });
+  const r1 = await run({ plan: [spec('a', 'scout')], runner: runner1 });
+  assert.equal(r1.status, 'completed');
+  assert.equal(r1.tasks[0].capability, shippedDefault);
+  const expected = { 'cheap-code': 'pc/mc:low', 'strong-code': 'ps/ms:high' }[shippedDefault];
+  assert.ok(expected, `test fixture supports cheap-code and strong-code scout defaults; got "${shippedDefault}"`);
+  assert.equal(calls1[0].modelId, expected, `unpinned scout task must route via the shipped ${shippedDefault} chain`);
+
+  // (2) An explicit capability overrides the shipped default in EITHER direction.
+  const other = shippedDefault === 'cheap-code' ? 'strong-code' : 'cheap-code';
+  const { calls: calls2, runner: runner2 } = scripted({ '*': okReply });
+  const r2 = await run({ plan: [spec('a', 'scout', [], { capability: other })], runner: runner2 });
+  assert.equal(r2.status, 'completed');
+  assert.equal(r2.tasks[0].capability, other);
+  assert.equal(calls2[0].modelId, { 'cheap-code': 'pc/mc:low', 'strong-code': 'ps/ms:high' }[other]);
+
+  // (3) The loaded agent definitions are unchanged by routing/mechanism use.
+  assert.equal(scout.meta.capability, shippedDefault, 'orchestrate must not mutate the shipped agent definition');
+
 });

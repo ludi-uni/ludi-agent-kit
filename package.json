@@ -18,6 +18,9 @@
     "AGENTS.md",
     "adapters/codex/",
     "adapters/pi/README.md",
+    "adapters/pi/build-profiles.mjs",
+    "adapters/pi/package.mjs",
+    "adapters/pi/generated/",
     "adapters/pi/browser/",
     "adapters/pi/lib/",
     "adapters/pi/loop-guard/",
@@ -43,6 +46,7 @@
     "tests/"
   ],
   "pi": {
+    "subagents": { "agents": ["./adapters/pi/generated/agent-profiles"] },
     "extensions": [
       "./adapters/pi/loop-guard/index.js",
       "./adapters/pi/orchestrator-ext/index.js"

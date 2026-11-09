@@ -23,6 +23,7 @@ async function _importsFn() {
       subagent: await import(pathToFileURL(resolve(kitRoot, 'adapters/pi/lib/subagent.mjs')).href),
       native: await import(pathToFileURL(resolve(kitRoot, 'adapters/pi/lib/native-subagent.mjs')).href),
       api: await import(pathToFileURL(resolve(kitRoot, 'lib/orchestrator/api.mjs')).href),
+      install: await import(pathToFileURL(resolve(kitRoot, 'adapters/pi/lib/package-install.mjs')).href),
     };
   }
   return _imports;
@@ -52,12 +53,23 @@ export default function orchestratorExtension(pi) {
   const disposeNative = () => { try { _native?.dispose(); } catch { /* best-effort shutdown */ } _native = null; };
   pi.on('session_shutdown', disposeNative);
 
+  pi.registerCommand('ludi-doctor', {
+    description: 'Read-only kit package, legacy links, roles, model and pi-subagents diagnostics',
+    handler: async (_args, ctx) => {
+      const { install } = await _importsFn();
+      const report = install.diagnosePackage({ projectDir: ctx.cwd });
+      report.subagentsLoaded = await install.probeSubagents(pi);
+      report.modelSelected = !!ctx.model;
+      ctx.ui.notify(JSON.stringify(report, null, 2), 'info');
+    },
+  });
+
   // The pi session id is AUTHORITATIVE for clientContext kind 'pi-web'. A caller
   // may not claim a different session — mismatch is rejected before any run starts.
   const run = async (action, params, executionCtx = null, onProgress = null, signal = null) => {
     const root = kitPath();
     const im = await _importsFn();
-    const { loadOrchestrationContext, listOrchestrationRuns, showRun, formatReport, formatRunList, defaultStorePath, pendingDecisions, createRunHealth, createRunRunner, startOrchestration, resumeOrchestration, answerOrchestration, parseOlderThan, pruneOrchestrationRuns, deleteOrchestrationRun, clearOrchestrationRuns, previewRunCleanup, formatCleanup } = im.api;
+    const { loadOrchestrationContext, listOrchestrationRuns, showRun, formatReport, formatRunList, pendingDecisions, createRunHealth, createRunRunner, startOrchestration, resumeOrchestration, answerOrchestration, parseOlderThan, pruneOrchestrationRuns, deleteOrchestrationRun, clearOrchestrationRuns, previewRunCleanup, formatCleanup } = im.api;
     const createPiInvoker = im.invoke.createPiInvoker;
     const createPiSubagentRunner = im.subagent.createPiSubagentRunner;
     const requestedClient = params.clientContext;
@@ -66,7 +78,8 @@ export default function orchestratorExtension(pi) {
     if (requestedClient && !sessionId) return 'pi session id unavailable; cannot bind run';
     if (requestedClient?.sessionId && requestedClient.sessionId !== sessionId) return 'clientContext sessionId mismatch';
     const cc = requestedClient ? { kind: 'pi-web', sessionId } : null;
-    const ctx = loadOrchestrationContext({ kit: root, storePath: params.store || defaultStorePath(root), clientContext: cc });
+    const paths = im.install.piRuntimePaths({ kitRoot: root, store: params.store });
+    const ctx = loadOrchestrationContext({ kit: root, ...paths, clientContext: cc });
     try {
       if (ctx.errors.length) return ctx.errors.join('\n');
       if (action === 'list') return formatRunList(listOrchestrationRuns(ctx, { status: params.status || null }));
@@ -85,9 +98,9 @@ export default function orchestratorExtension(pi) {
         return rows.length ? rows.map(d => `${d.runId}  ${d.id}  [${d.taskId}] ${d.question}`).join('\n') : 'decisions: none';
       }
       if (action === 'prune') {
-        // Destructive: deletes terminal run history. Always previews in the reply.
+        // Destructive only with force=true; otherwise a read-only preview of terminal runs.
         const ms = params.olderThan ? parseOlderThan(params.olderThan) : undefined;
-        return formatCleanup(pruneOrchestrationRuns(ctx, { olderThanMs: ms }), { verb: '削除' });
+        return formatCleanup(pruneOrchestrationRuns(ctx, { olderThanMs: ms, force: !!params.force }), { verb: '削除' });
       }
       if (action === 'delete') {
         // Destructive only with force=true; otherwise a preview of that one run.
@@ -163,7 +176,7 @@ export default function orchestratorExtension(pi) {
     promptSnippet: 'ludi_orchestrate: start, list, resume, answer, or clean up history of a persistent orchestration run.',
     promptGuidelines: [
       'Use ludi_orchestrate to continue a high-level request across sessions. Do not re-ask a decision that is already pending; answer it or list it.',
-      'prune, delete and clear are destructive. delete and clear preview unless force=true; delete active requires force=true; clear active requires both force=true and includeActive=true.',
+      'prune, delete and clear are destructive and all preview unless force=true; delete active requires force=true; clear active requires both force=true and includeActive=true.',
     ],
     parameters: Type.Object({
       action: Type.String({ description: 'start | list | status | children | result | decisions | resume | answer | prune | delete | clear' }),
@@ -173,7 +186,7 @@ export default function orchestratorExtension(pi) {
       answer: Type.Optional(Type.String({ description: 'User answer text for action=answer' })),
       status: Type.Optional(Type.String({ description: 'Filter for action=list' })),
       olderThan: Type.Optional(Type.String({ description: 'Duration for action=prune, e.g. "7d", "12h", "30m", "2w"' })),
-      force: Type.Optional(Type.Boolean({ description: 'Actually delete for action=delete/clear (otherwise preview only)' })),
+      force: Type.Optional(Type.Boolean({ description: 'Actually delete for action=prune/delete/clear (otherwise preview only)' })),
       includeActive: Type.Optional(Type.Boolean({ description: 'For action=clear with force=true: also delete active and resumable runs' })),
       repo: Type.Optional(Type.String({ description: 'Repository root the agents should read' })),
       store: Type.Optional(Type.String({ description: 'Override path to the orchestration sqlite file' })),

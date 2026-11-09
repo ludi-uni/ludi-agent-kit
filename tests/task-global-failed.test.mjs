@@ -25,10 +25,15 @@ const REG = { version: 1, backends: {
   codex: { provider: 'px', model: 'mx', thinking: 'high' },
   devin: { provider: 'pd', model: 'md', thinking: 'high' },
 } };
+// The fixture chains below assume cheap-code starts on pc/mc. The MECHANISM
+// under test (task-global failure -> skip after capability escalation) is what
+// matters, so every scenario task pins `capability: 'cheap-code'` explicitly —
+// independent of the shipped scout default in agents/scout.md.
 const policyWith = over => mergePolicy(DEFAULT_POLICY, over ?? {});
 const jsonReply = obj => `notes\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
 const okReply = jsonReply({ status: 'completed', summary: 'done', acceptance: [{ id: 'A1', met: true, evidence: 'e' }] });
 const spec = (id, agent, dependencies = [], extra = {}) => ({ id, title: `task ${id}`, goal: `goal ${id}`, agent, dependencies, acceptance: ['done'], ...extra });
+const CHEAP = { capability: 'cheap-code' };
 const healthSkip = (skipIds) => ({ skip: c => (skipIds.includes(c.modelId) ? 'usage_exhausted' : null), report() {} });
 
 async function runScenario(script, { policy: over = {}, health = null } = {}) {
@@ -36,7 +41,7 @@ async function runScenario(script, { policy: over = {}, health = null } = {}) {
   const calls = [];
   const invoke = createScriptedInvoker(script, calls);
   const runner = createAgentRunner({ invoke, agents, routing, registry: REG, policy, health });
-  const r = await orchestrate({ request: 'r', plan: [spec('a', 'scout')], agents, routing, registry: REG, policy, runner });
+  const r = await orchestrate({ request: 'r', plan: [spec('a', 'scout', [], CHEAP)], agents, routing, registry: REG, policy, runner });
   return { r, calls };
 }
 const count = (calls, prefix) => calls.filter(c => c.modelId.startsWith(prefix)).length;
@@ -71,7 +76,7 @@ test('C: no-progress turn-limit marks task-global; not re-invoked after escalati
     return req.modelId.startsWith('pd/') ? { ok: true, text: okReply, child: { toolCalls: 1, turns: 1 } } :
       { ok: false, error: 'turn limit 12', failureClass: 'NO_PROGRESS_TIMEOUT', telemetry: { text: '', toolCalls: 0, turns: 12 }, child: { toolCalls: 0, turns: 12, stopReason: 'no-progress-turn-limit' } };
   }, agents, routing, registry: REG, policy });
-  const r = await orchestrate({ request: 'r', plan: [spec('a', 'scout')], agents, routing, registry: REG, policy, runner });
+  const r = await orchestrate({ request: 'r', plan: [spec('a', 'scout', [], CHEAP)], agents, routing, registry: REG, policy, runner });
   // pl/ml (freetoken-analog) failed once on cheap; must not re-run on strong.
   assert.ok(count(calls, 'pl/') <= 1, `pl/ml invoked ${count(calls,'pl/')}x`);
 });

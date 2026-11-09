@@ -4,7 +4,7 @@
 
 ## 必要な環境
 
-**Pi パッケージとして利用する場合**は、対応する Pi と、認証済みのプロバイダーが必要です。実行するモデルの ID と利用枠も確認してください。**ソースから利用する場合**は、Windows・PowerShell 7・Git・`node:sqlite` 対応の Node.js が必要です（Node 24 で検証）。基本スクリプトに `npm install` は不要です。
+**Pi パッケージとして利用する場合**の検証基準は、ネイティブ Windows 上の Pi 1.4.0 + pi-subagents 0.83.1 です（Node >=22.19.0、検証は Node 24.22.1）。実タスクでは認証済みプロバイダー、モデル ID、利用枠も必要です。版・OS 制限は[パッケージ導入・移行](pi-package.ja.md)を確認してください。**ソースから利用する場合**は、Windows・PowerShell 7・Git・`node:sqlite` 対応の Node.js が必要です（Node 24 で検証）。基本スクリプトに `npm install` は不要です。
 
 ## Pi に導入する
 
@@ -27,13 +27,15 @@ Git から導入する場合は `pi install git:github.com/ludi-uni/ludi-agent-k
 $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Join-Path $HOME '.pi/agent' }
 $bindingDir = Join-Path $agentDir 'ludi-agent-kit'
 New-Item -ItemType Directory -Force $bindingDir | Out-Null
-Copy-Item adapters/pi/models.local.example.json (Join-Path $bindingDir 'models.local.json')
+$bindingPath = Join-Path $bindingDir 'models.local.json'
+if (Test-Path $bindingPath) { throw '既存の対応付けを上書きせず、編集・マージしてください。' }
+Copy-Item adapters/pi/models.local.example.json $bindingPath
 pi --list-models
 ```
 
 npm パッケージから利用する場合、コピー元はインストールされたパッケージ内の `adapters/pi/models.local.example.json` です。キットはユーザー領域の `models.local.json` を**読み取るだけ**で、書き込みません。ここに認証情報は保存しないでください。優先順位や移行方法は [Pi adapter: model selection（英語）](../adapters/pi/README.md#model-selection-flow) を参照してください。オーケストレータの実行前チェックは対応付けの有無だけを調べ、認証・利用枠までは確認しません。
 
-`pi-subagents` は別パッケージです。Pi への導入だけでは `agents/*.md` を pi-subagents の役割として自動登録しません。必要なら別途導入・設定してください。`sync-pi.ps1` は**ソースから利用する場合の代替手段**であり、インストール後の必須操作ではありません。二重登録を確認せず同じパッケージに `-Apply` しないでください。
+native roles を使う場合は別依存を `pi install npm:pi-subagents` で明示導入します。キットの `pi.subagents.agents` manifest が可搬な生成 profiles を自動公開するため、**`sync-pi.ps1 -Apply` や手動 Junction は不要**です。Pi を再起動し `/ludi-doctor` と `/subagents-doctor` を確認してください。ユーザー/プロジェクト定義やモデル override は保持され、package roles は Pi/subagents のモデルを継承します。一方、キット orchestration は上記 capability bindings を使います。Pi 内の実行状態は npm package 内ではなく `<agent-dir>/ludi-agent-kit/` に保存します。旧リンク、複数導入元、dry-run 移行/復元、安全境界と検証範囲は[パッケージ導入・移行](pi-package.ja.md)を参照してください。以下の旧 sync はソース用の代替であり、package 導入後の手順ではありません。
 
 ## 実行する前に
 
@@ -60,7 +62,7 @@ node scripts/check-pi.mjs                      # オフライン隔離スター�
 
 `scripts/check-pi.mjs`（ネイティブ Windows + pwsh + インストール済み Pi が必要）は一時的なエージェントディレクトリを作成し、`sync-pi.ps1 -Apply`（`-ApplySettings` ではない）で展開してから、インストール済み Pi をオフライン RPC モード（`--offline --no-mcp --no-session`）で起動し、`orchestrate` コマンド・3 つの `skill:*` コマンド・物理ターゲット・メッセージ/トークン/コストがゼロであること、そして期待されるキットのリンクと loop-guard 拡張エントリが一意であることを、チェック自身が所有する一時ディレクトリを使って検証します（`--keep-temp` で検査用に残せます）。同期処理はキット内の `adapters/pi/out/`（gitignored）にあるプレビューも更新しますが、実ユーザー設定は変更しません。プロンプト送信やモデル呼び出しは一切行いません。エージェント定義はキットとの構造比較で検証します。RPC にはエージェントレジストリや拡張フック数を問い合わせる公開手段がなく、別パッケージの pi-subagents はこのチェックでは導入・検証しません。実機の Pi に対しては `node scripts/check-pi.mjs --json` で実行してください。`tests/pi-startup.test.mjs` のユニットテストはモックのみを使用し、実チェックの合格を証明するものではありません。
 
-`sync-pi.ps1` は標準では提案を `adapters/pi/out/` に生成します。`-Apply` は Junction と `AGENTS.md` を作成し、競合をバックアップします。`auth.json` とモデルの認証情報は変更しません。`settings.json` は別途明示する `-ApplySettings` を付けた場合のみ変更されます。解決したモデルを `subagents.agentOverrides.{scout,coder,visual,reviewer}` の `model`/`thinking` だけにマージし（その他のフィールド・ロール・キーは保持）、元ファイルを `<AgentDir>/ludi-agent-kit/backup-*/settings.json` にバイト単位でバックアップし、JSON ラウンドトリップを検証し、計画取得後にファイルが変更されていれば拒否します。これは楽観的な競合検出であり、カーネルの compare-and-swap ではないため、同期実行中に settings.json を編集しないでください。反映には pi の再起動または `/reload` が必要です。project 設定や provider 別 override が優先される場合もあるため、`/subagents-models` で実効値を確認してください。
+`sync-pi.ps1` は標準では提案を `adapters/pi/out/` に生成します。`-Apply` は Junction と `AGENTS.md` を作成し、競合をバックアップします。`agents/ludi-agent-kit` Junction は `adapters/pi/out/agent-profiles/`（派生 pi-subagents プロファイル）を指します。pi-subagents の `tools:` は厳密な許可リストで `access:` を解釈しないため、承認済みの coder/tester ワーカーロールにだけ生成した policy 固定の shell-gate 拡張経由で `ludi_exec` が供給されます。それ以外のロールは `tools:`/frontmatter をそのまま保持し（例: browser は `powershell` を保持）、provider は付きません。生の `powershell`/`bash` は `ludi_exec` 経由でも一切許可しません。素の `agents/` を指す旧 Junction は conflict になるため `-BackupConflicts` で向きを変えてください。`auth.json` とモデルの認証情報は変更しません。`settings.json` は別途明示する `-ApplySettings` を付けた場合のみ変更されます。解決したモデルを `subagents.agentOverrides.{scout,coder,visual,reviewer}` の `model`/`thinking` だけにマージし（その他のフィールド・ロール・キーは保持）、元ファイルを `<AgentDir>/ludi-agent-kit/backup-*/settings.json` にバイト単位でバックアップし、JSON ラウンドトリップを検証し、計画取得後にファイルが変更されていれば拒否します。これは楽観的な競合検出であり、カーネルの compare-and-swap ではないため、同期実行中に settings.json を編集しないでください。反映には pi の再起動または `/reload` が必要です。project 設定や provider 別 override が優先される場合もあるため、`/subagents-models` で実効値を確認してください。
 
 ```powershell
 pwsh -NoProfile -File adapters/pi/sync-pi.ps1                # まず提案を確認

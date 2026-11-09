@@ -1,6 +1,11 @@
 Set-StrictMode -Version Latest
 
 $script:WinAppTestedVersion = '0.6.1'
+# Non-recording CLI calls (version probe, discovery, screenshot, inspect) are
+# expected to finish quickly; recording adds the requested duration (<= 60s)
+# plus a fixed shutdown margin.
+$script:WinAppDefaultTimeoutMs = 60000
+$script:WinAppRecordMarginMs = 90000
 
 function New-WinAppException {
     [OutputType([System.InvalidOperationException])]
@@ -46,8 +51,14 @@ function Invoke-WinAppProcess {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Executable,
-        [Parameter(Mandatory)][string[]]$Arguments
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [Nullable[int]]$TimeoutMs
     )
+
+    $effectiveTimeoutMs = if ($null -ne $TimeoutMs) { [int]$TimeoutMs } else { $script:WinAppDefaultTimeoutMs }
+    if ($effectiveTimeoutMs -le 0) {
+        throw (New-WinAppException -Code 'WINAPP_COMMAND_FAILED' -Message 'WinApp CLI timeout must be positive.')
+    }
 
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $Executable
@@ -60,22 +71,54 @@ function Invoke-WinAppProcess {
 
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $started = $false
     try {
         if (-not $process.Start()) { throw 'Process start returned false.' }
+        $started = $true
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        $process.WaitForExit()
-        $stdout = $stdoutTask.GetAwaiter().GetResult()
-        $stderr = $stderrTask.GetAwaiter().GetResult()
+        # Bounded wait: a hung CLI must not block the caller forever and must
+        # not be reported as a success.
+        $exited = $process.WaitForExit($effectiveTimeoutMs)
+        # The pipes drain quickly once the child exits, but every read — on the
+        # timeout path and on the normal-exit path alike — is bounded so a
+        # wedged reader can never hang the caller indefinitely.
+        $ioTimeoutMs = 10000
+        if (-not $exited) {
+            $graceDeadline = [DateTime]::UtcNow.AddSeconds(5)
+            try { $process.Kill($true) } catch { }
+            while (-not $process.HasExited -and [DateTime]::UtcNow -lt $graceDeadline) {
+                Start-Sleep -Milliseconds 100
+            }
+            if (-not $process.HasExited) {
+                throw (New-WinAppException -Code 'WINAPP_COMMAND_FAILED' -Message "WinApp CLI exceeded the $effectiveTimeoutMs ms timeout and could not be terminated; the process may still be running.")
+            }
+            # Reap whatever output was produced so the timeout error includes it.
+            $stdout = if ($stdoutTask.Wait($ioTimeoutMs)) { $stdoutTask.Result } else { '' }
+            $stderr = if ($stderrTask.Wait($ioTimeoutMs)) { $stderrTask.Result } else { '' }
+            throw (New-WinAppException -Code 'WINAPP_TIMEOUT' -Message "WinApp CLI did not exit within $effectiveTimeoutMs ms and was killed.$([Environment]::NewLine)$stderr")
+        }
+        # Output that cannot be reaped after a successful exit is a classified
+        # read failure, never silently dropped into an empty success string.
+        if (-not $stdoutTask.Wait($ioTimeoutMs) -or -not $stderrTask.Wait($ioTimeoutMs)) {
+            throw (New-WinAppException -Code 'WINAPP_COMMAND_FAILED' -Message "WinApp CLI exited within $effectiveTimeoutMs ms but its stdout/stderr could not be reaped within $ioTimeoutMs ms.")
+        }
         return [pscustomobject]@{
             exit_code = $process.ExitCode
-            stdout    = $stdout
-            stderr    = $stderr
+            stdout    = $stdoutTask.Result
+            stderr    = $stderrTask.Result
+            timed_out = $false
+            timeout_ms = $effectiveTimeoutMs
             arguments = @($Arguments)
         }
     }
     catch {
-        throw (New-WinAppException -Code 'WINAPP_NOT_INSTALLED' -Message "WinApp CLI could not be started: $($_.Exception.Message)")
+        if (-not $started) {
+            throw (New-WinAppException -Code 'WINAPP_NOT_INSTALLED' -Message "WinApp CLI could not be started: $($_.Exception.Message)")
+        }
+        # Timeout and any other post-start failure propagate with their
+        # classified error code; never report a hung CLI as a success.
+        throw
     }
     finally {
         $process.Dispose()
@@ -167,6 +210,9 @@ function ConvertTo-WinAppError {
     elseif ($evidence -match '(?i)missing_app|no_target|not found|no visible window|element_not_found') {
         'WINDOW_NOT_FOUND'
     }
+    elseif ($evidence -match '(?i)timeout|timed\s*out|deadline') {
+        'WINAPP_TIMEOUT'
+    }
     elseif ($Operation -eq 'screenshot') { 'CAPTURE_FAILED' }
     elseif ($Operation -eq 'record') { 'RECORD_FAILED' }
     else { 'WINAPP_COMMAND_FAILED' }
@@ -190,7 +236,20 @@ function Invoke-WinAppJson {
         [Parameter(Mandatory)][ValidateSet('discover', 'screenshot', 'record', 'inspect')][string]$Operation
     )
 
-    $result = Invoke-WinAppProcess -Executable $Executable -Arguments $Arguments
+    # Record operations keep the CLI busy for the requested duration; give the
+    # process that time plus a fixed margin instead of the generic timeout.
+    $timeoutMs = $script:WinAppDefaultTimeoutMs
+    if ($Operation -eq 'record') {
+        $durationIndex = [Array]::IndexOf($Arguments, '--duration-sec')
+        if ($durationIndex -ge 0 -and ($durationIndex + 1) -lt $Arguments.Count) {
+            $durationSeconds = 0.0
+            if ([double]::TryParse([string]$Arguments[$durationIndex + 1], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$durationSeconds)) {
+                $candidate = [int][Math]::Ceiling($durationSeconds * 1000) + $script:WinAppRecordMarginMs
+                if ($candidate -gt $timeoutMs) { $timeoutMs = $candidate }
+            }
+        }
+    }
+    $result = Invoke-WinAppProcess -Executable $Executable -Arguments $Arguments -TimeoutMs $timeoutMs
     if ($result.exit_code -ne 0) {
         $failure = ConvertTo-WinAppError -ExitCode $result.exit_code -StdOut $result.stdout -StdErr $result.stderr -Operation $Operation
         throw (New-WinAppException -Code $failure.code -Message $failure.message -UpstreamCode $failure.upstream_code -UpstreamType $failure.upstream_type -ExitCode $failure.exit_code)

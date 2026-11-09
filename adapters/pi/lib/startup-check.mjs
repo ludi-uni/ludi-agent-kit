@@ -27,12 +27,18 @@ import { fileURLToPath } from 'node:url';
 import { locatePiEntry } from './invoke.mjs';
 import { loadAgents } from '../../../lib/agents.mjs';
 import { loadRouting } from '../../../lib/routing.mjs';
+import { accessOf } from '../../../lib/orchestrator/permissions.mjs';
+import { SHELL_PROFILE_ROLES } from './agent-profiles.mjs';
 
 export const EXPECTED_SKILLS = ['pi-workflow', 'project-management', 'visual-verification'];
 export const EXPECTED_EXTENSIONS = {
   'ludi-agent-kit': 'adapters/pi/loop-guard',
   'ludi-orchestrator': 'adapters/pi/orchestrator-ext',
 };
+// Roles whose derived profile must carry `ludi_exec` plus a generated
+// policy-explicit shell-gate provider. Only the parent-approved coder/tester
+// workers are adapted; every other role keeps its source tools verbatim.
+export const EXPECTED_SHELL_PROFILES = [...SHELL_PROFILE_ROLES].sort();
 export const REQUESTS = [
   { id: 'ludi-startup-commands', type: 'get_commands' },
   { id: 'ludi-startup-state', type: 'get_state' },
@@ -154,7 +160,12 @@ export function validateLayout(agentDir, kitRoot) {
   for (const skill of EXPECTED_SKILLS) {
     push(`link:skills/${skill}`, linkEntry(agentDir, join('skills', skill), join(kitRoot, 'skills', skill)));
   }
-  push('link:agents/ludi-agent-kit', linkEntry(agentDir, join('agents', 'ludi-agent-kit'), join(kitRoot, 'agents')));
+  // The agents junction must target the GENERATED pi-subagents profiles under
+  // adapters/pi/out/agent-profiles — never the raw common agents dir. The raw
+  // definitions intentionally lack the strict tools/provider contract pi-subagents
+  // requires for gated shell access.
+  const profilesDir = join(kitRoot, 'adapters', 'pi', 'out', 'agent-profiles');
+  push('link:agents/ludi-agent-kit', linkEntry(agentDir, join('agents', 'ludi-agent-kit'), profilesDir));
   for (const [name, target] of Object.entries(EXPECTED_EXTENSIONS)) {
     push(`link:extensions/${name}`, linkEntry(agentDir, join('extensions', name), join(kitRoot, target)));
   }
@@ -182,7 +193,11 @@ export function validateLayout(agentDir, kitRoot) {
   add('agents:exclusive', agentEntries.length === 1 && agentEntries[0] === 'ludi-agent-kit',
     agentEntries.length ? `entries: ${agentEntries.join(', ')}` : 'agents dir missing');
 
-  // Installed agent definitions: same set, same content, valid via the neutral loader.
+  // Installed agent definitions: derived profiles carry the same roles and
+  // bodies as the common agents. Only coder/tester have `tools` rewritten from
+  // `access` (ludi_exec + provider); every other role passes its authored
+  // frontmatter through verbatim. Structural comparison is meta-name/body plus
+  // the derived contract, not byte equality with the source files.
   let routing = null;
   try { routing = loadRouting(join(kitRoot, 'routing', 'routing.json')); }
   catch (e) { add('agents:routing', false, e.message); }
@@ -198,13 +213,70 @@ export function validateLayout(agentDir, kitRoot) {
     evidence.agents = instNames;
     add('agents:set', JSON.stringify(kitNames) === JSON.stringify(instNames),
       JSON.stringify(kitNames) === JSON.stringify(instNames) ? `installed: ${instNames.join(', ')}` : `expected [${kitNames}] got [${instNames}]`);
-    // Physical content equality: the junction must expose the kit files themselves.
-    const contentMismatch = kitAgents.agents.filter(a => {
+    // Body equality: derived profiles must not inject adapter detail into prompts.
+    const bodyMismatch = kitAgents.agents.filter(a => {
       const other = installed.agents.find(b => b.meta.name === a.meta.name);
-      return !other || other.body !== a.body || JSON.stringify(other.meta) !== JSON.stringify(a.meta);
+      return !other || other.body !== a.body;
     }).map(a => a.meta.name);
-    add('agents:content', contentMismatch.length === 0,
-      contentMismatch.length ? `content differs: ${contentMismatch.join(', ')}` : 'installed definitions match kit content');
+    add('agents:content', bodyMismatch.length === 0,
+      bodyMismatch.length ? `body differs: ${bodyMismatch.join(', ')}` : 'installed bodies match kit content');
+    // Derived shell contract: only the approved coder/tester worker roles are
+    // adapted. Their `tools` is rewritten to the access-derived allowlist
+    // (gaining ludi_exec, never raw powershell/bash) and they get a generated
+    // policy-explicit provider. Every other role must keep its source tools
+    // and provider fields verbatim — the derivation adds no permissions to
+    // them, so legacy powershell entries on e.g. browser are preserved, not
+    // stripped or added to.
+    for (const inst of installed.agents) {
+      const role = inst.meta.name;
+      const tools = String(inst.meta.tools ?? '').split(',').map(s => s.trim()).filter(Boolean);
+      const src = kitAgents.agents.find(a => a.meta.name === role);
+      if (!src) {
+        add(`profile:${role}:source`, false, 'no matching source agent in kit');
+        continue;
+      }
+      if (!EXPECTED_SHELL_PROFILES.includes(role)) {
+        const srcTools = String(src.meta.tools ?? '').split(',').map(s => s.trim()).filter(Boolean);
+        add(`profile:${role}:tools-verbatim`, JSON.stringify(tools) === JSON.stringify(srcTools),
+          JSON.stringify(tools) === JSON.stringify(srcTools) ? `tools preserved: ${tools.join(',')}` : `derived tools [${tools.join(',')}] differ from source [${srcTools.join(',')}]`);
+        add(`profile:${role}:no-provider`, inst.meta.subagentOnlyExtensions === src.meta.subagentOnlyExtensions,
+          inst.meta.subagentOnlyExtensions === src.meta.subagentOnlyExtensions ? 'no provider added' : `unexpected provider ${inst.meta.subagentOnlyExtensions}`);
+        continue;
+      }
+      // Permissions must be derived from the source definition, not the
+      // installed profile: an installed file that lacks `access` would
+      // otherwise be re-inferred from its rewritten tools and could hide a
+      // missing ludi_exec/provider contract.
+      const access = accessOf(src);
+      if (access.shell === 'false') {
+        const hasGate = tools.includes('ludi_exec') || inst.meta.subagentOnlyExtensions !== undefined;
+        add(`profile:${role}:no-shell-provider`, !hasGate,
+          hasGate ? `unexpected shell provider (tools=${tools.join(',')} ext=${inst.meta.subagentOnlyExtensions})` : 'no shell provider');
+        continue;
+      }
+      add(`profile:${role}:ludi_exec`, tools.includes('ludi_exec'), `tools=${tools.join(',')}`);
+      const ext = inst.meta.subagentOnlyExtensions;
+      const extOk = typeof ext === 'string' && /^\.(?:\\|\/)extensions(?:\\|\/)/.test(ext);
+      add(`profile:${role}:provider`, extOk, `subagentOnlyExtensions=${ext ?? '(absent)'}`);
+      if (extOk) {
+        const providerPath = join(agentsParent, 'ludi-agent-kit', ext.replace(/^\.(?:\\|\/)/, ''));
+        let providerOk = false, providerDetail = '';
+        try {
+          const src = readFileSync(providerPath, 'utf8');
+          providerOk = /createShellGate/.test(src) && new RegExp(`"agent":"${role}"`).test(src)
+            && new RegExp(`"shell":"${access.shell}"`).test(src) && !/process\.env/.test(src);
+          providerDetail = providerOk ? providerPath : 'provider file lacks createShellGate/role/shell config';
+        } catch (e) { providerDetail = e.message; }
+        add(`profile:${role}:provider-file`, providerOk, providerDetail);
+      }
+    }
+    // The adapted roles never carry raw shell in their derived allowlist.
+    const rawShell = installed.agents.filter(a =>
+      EXPECTED_SHELL_PROFILES.includes(a.meta.name) &&
+      String(a.meta.tools ?? '').split(',').map(s => s.trim()).some(t => t === 'powershell' || t === 'bash'))
+      .map(a => a.meta.name);
+    add('profiles:no-raw-shell', rawShell.length === 0,
+      rawShell.length ? `raw shell in adapted allowlist: ${rawShell.join(', ')}` : 'no powershell/bash in adapted profiles');
   }
 
   // Extensions: exactly the two kit junctions; loop-guard resolves to exactly one

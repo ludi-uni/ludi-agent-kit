@@ -23,7 +23,7 @@ pi install npm:@ludi-uni/ludi-agent-kit
 pi list
 ```
 
-This registers the `pi-workflow`, `project-management`, and `visual-verification` skills and the loop guard and `ludi_orchestrate` extensions. The separate `pi-subagents` package and its agent roles are **not** installed automatically. `npm install` alone does not register Pi resources; use `pi install`. A Git install is also available: `pi install git:github.com/ludi-uni/ludi-agent-kit`.
+This registers the `pi-workflow`, `project-management`, and `visual-verification` skills and the loop guard and `ludi_orchestrate` extensions. Install the separate `pi-subagents` dependency explicitly with `pi install npm:pi-subagents` to discover the kit's generated roles through its package manifest; no manual Junction or sync apply is required. User/project roles and model overrides are preserved. Run `/ludi-doctor` after restarting Pi; see [package setup/migration and validated versions](docs/pi-package.md). `npm install` alone does not register Pi resources; use `pi install`. A Git install is also available: `pi install git:github.com/ludi-uni/ludi-agent-kit`.
 
 Before live execution, [configure the user-level model bindings](docs/getting-started.md#bind-models-before-live-use) using IDs actually shown by `pi --list-models`. The repository's `adapters/pi/models.json` is a template, **not** proof of authentication, quota, availability, or price. Review extensions before enabling them: they run with your Pi process permissions. Restart Pi after updating an installed package.
 

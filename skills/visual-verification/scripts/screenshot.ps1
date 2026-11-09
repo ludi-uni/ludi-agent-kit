@@ -22,7 +22,7 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $resolvedRunDirectory 'screenshot.png'
 }
 $resolvedOutputPath = [IO.Path]::GetFullPath($OutputPath)
-Assert-OutputAvailable -Path $resolvedOutputPath -Overwrite:$Overwrite
+Assert-OutputAvailable -Path $resolvedOutputPath -Overwrite:$Overwrite -OverwriteHint '-Overwrite'
 $target = Resolve-CaptureTarget -Mode $Mode -X $X -Y $Y -Width $Width -Height $Height -WindowTitle $WindowTitle -Hwnd $Hwnd
 $ffmpegArguments = [string[]]@('-f', 'gdigrab', '-framerate', '1', '-draw_mouse', '1') + $target.InputOptions + @('-frames:v', '1', '-c:v', 'png')
 if ($Overwrite) {

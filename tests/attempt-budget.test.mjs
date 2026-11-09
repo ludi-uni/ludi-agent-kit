@@ -26,6 +26,10 @@ const policyWith = over => mergePolicy(DEFAULT_POLICY, over ?? {});
 const jsonReply = obj => `notes\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
 const okReply = jsonReply({ status: 'completed', summary: 'done', acceptance: [{ id: 'A1', met: true, evidence: 'e' }] });
 const spec = (id, agent, dependencies = [], extra = {}) => ({ id, title: `task ${id}`, goal: `goal ${id}`, agent, dependencies, acceptance: ['done'], ...extra });
+// This file tests the candidate/attempt-budget MECHANISM, not the shipped agent
+// defaults: pin the task capability explicitly so a scout capability flip in
+// agents/scout.md does not invalidate the fixture chains below.
+const CHEAP = { capability: 'cheap-code' };
 
 // Health monitor stub: skip returns a reason for the listed modelIds (no invocation).
 const healthSkip = (skipIds) => ({ skip: c => (skipIds.includes(c.modelId) ? 'usage_exhausted until later' : null), report() {} });
@@ -37,7 +41,7 @@ async function runScenario(script, { policy: over = {}, health = null } = {}) {
   const calls = [];
   const invoke = createScriptedInvoker(script, calls);
   const runner = createAgentRunner({ invoke, agents, routing, registry: REG, policy, health });
-  const r = await orchestrate({ request: 'r', plan: [spec('a', 'scout')], agents, routing, registry: REG, policy, runner });
+  const r = await orchestrate({ request: 'r', plan: [spec('a', 'scout', [], CHEAP)], agents, routing, registry: REG, policy, runner });
   return { r, calls };
 }
 

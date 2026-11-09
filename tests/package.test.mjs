@@ -15,6 +15,7 @@ test('npm manifest exposes existing Pi resources without installation hooks', ()
     './adapters/pi/loop-guard/index.js',
     './adapters/pi/orchestrator-ext/index.js',
   ]);
+  assert.deepEqual(pkg.pi.subagents, { agents: ['./adapters/pi/generated/agent-profiles'] });
   assert.deepEqual(pkg.pi.skills, [
     './skills/pi-workflow', './skills/project-management', './skills/visual-verification',
   ]);
@@ -23,6 +24,12 @@ test('npm manifest exposes existing Pi resources without installation hooks', ()
   for (const field of ['preinstall', 'install', 'postinstall', 'prepare', 'prepublishOnly']) {
     assert.equal(pkg.scripts?.[field], undefined, `${field} must not run on install/publish`);
   }
+});
+
+test('distributed native profiles are current without lifecycle generation', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const result = spawnSync(process.execPath, ['adapters/pi/build-profiles.mjs', '--check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('npm file allowlist excludes local state and includes extension runtime paths', () => {

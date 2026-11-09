@@ -19,7 +19,7 @@ pi install npm:@ludi-uni/ludi-agent-kit
 pi list
 ```
 
-Pi への導入で `pi-workflow`、`project-management`、`visual-verification` の各 Skill と、loop guard・`ludi_orchestrate` 拡張が読み込まれます。**実際にエージェントを動かす前に、モデルの対応付けを別途設定してください。** `npm install` だけでは Pi にリソースが登録されません。Git からは `pi install git:github.com/ludi-uni/ludi-agent-kit` でも導入できます。安全な手順、更新方法、検証コマンドは[導入ガイド](docs/getting-started.ja.md)にまとめています。
+Pi への導入で `pi-workflow`、`project-management`、`visual-verification` の各 Skill と、loop guard・`ludi_orchestrate` 拡張が読み込まれます。別依存を `pi install npm:pi-subagents` で明示導入すると、manifest からキットの生成 roles を検出します（手動 Junction / sync apply 不要）。独自役割・モデル override は保持します。再起動後に `/ludi-doctor` を確認してください。[対応版と安全な導入・移行](docs/pi-package.ja.md)を参照できます。**実際にエージェントを動かす前に、モデルの対応付けを別途設定してください。** `npm install` だけでは Pi にリソースが登録されません。Git からは `pi install git:github.com/ludi-uni/ludi-agent-kit` でも導入できます。安全な手順、更新方法、検証コマンドは[導入ガイド](docs/getting-started.ja.md)にまとめています。
 
 ## 基本構成
 

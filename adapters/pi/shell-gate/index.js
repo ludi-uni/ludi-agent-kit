@@ -7,11 +7,18 @@
 //     LUDI_SHELL_MODE / LUDI_SHELL_NETWORK captured at load time (the child env, never shared).
 //   - native in-process children: the generated wrapper calls createShellGate({ shell, network })
 //     with the launch's immutable access; no environment is consulted.
+//
+// A third, policy-explicit path serves pi-subagents agents that name `ludi_exec`
+// in their strict `tools` allowlist: a generated wrapper module imports
+// createShellGate with the role's immutable policy and is loaded through the
+// agent's `subagentOnlyExtensions`. Policy never comes from the ambient env on
+// that path; see adapters/pi/lib/agent-profiles.mjs.
 import { Type } from 'typebox';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { runCommand } from './run-command.mjs';
+import { formatShellRefusal } from './refusal.mjs';
 
 // Resolve junctions so that __dir is the physical location under the kit tree.
 const __file = realpathSync(fileURLToPath(import.meta.url));
@@ -56,7 +63,7 @@ export function createShellGate(policy = {}) {
       label: 'Ludi exec',
       description: 'Run one workspace command. Tests, lint, build, and read-only git are allowed. Push, publish, deploy, reset, and recursive delete are refused.',
       promptSnippet: 'ludi_exec: run an allowed shell command in the task workspace.',
-      promptGuidelines: ['Use ludi_exec instead of powershell or bash. If it returns POLICY_BLOCK, do not retry the command; report status needs_decision.'],
+      promptGuidelines: ['Use ludi_exec instead of powershell or bash. If it returns POLICY_BLOCK, do not retry or bypass the policy; report status needs_decision with the supplied decisions entry, including its non-empty question and any flags.'],
       parameters: Type.Object({
         command: Type.String({ description: 'One shell command. No user prompts.' }),
       }),
@@ -64,7 +71,7 @@ export function createShellGate(policy = {}) {
         const decideShell = await _ensureDecideShell();
         const decision = decideShell(params.command, access);
         if (!decision.allow) {
-          return { content: [{ type: 'text', text: `POLICY_BLOCK ${decision.reason}. Do not run this command. Return status "needs_decision" with the command in decisions.` }], isError: true };
+          return { content: [{ type: 'text', text: formatShellRefusal(params.command, decision) }], isError: true };
         }
         const ran = await runCommand(params.command, ctx?.cwd, signal, { requireConfirmedExit });
         const body = [`exit ${ran.code}`, ran.stdout.slice(-4000), ran.stderr.slice(-2000)].filter(Boolean).join('\n');

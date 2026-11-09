@@ -15,6 +15,7 @@ import { withEscalation, runPipeline, parseFileBlocks, runTests } from '../lib/p
 import { buildSettingsProposal } from '../adapters/pi/lib/settings-proposal.mjs';
 import { createScriptedInvoker } from '../adapters/pi/lib/invoke.mjs';
 import { loadPiRegistry, piUserModelsPath } from '../adapters/pi/lib/model-registry.mjs';
+import { agentsWithCapabilities } from './helpers/capability-fixtures.mjs';
 
 const kit = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const routing = loadRouting(join(kit, 'routing/routing.json'));
@@ -179,6 +180,15 @@ test('loop prevention: identical modelId on two backends is invoked once; no att
 });
 
 // ---------- fixture E2E (scripted invoker) ----------
+// runPipeline resolves scout/coder chains from agent.meta.capability. These E2E
+// tests verify the pipeline MECHANISM (scout pack -> coder fix -> verify),
+// so they run against deep-cloned fixtures that pin the role capabilities —
+// never a blanket override of unrelated roles, and never a mutation of the
+// loaded shipped definitions. One shipped-config coupling case is kept at the
+// end of this section; kit.test.mjs still pins the exact shipped values.
+const agentsFor = overrides => agentsWithCapabilities(agents, overrides, routing);
+const PIPELINE_CHEAP = agentsFor({ scout: 'cheap-code', coder: 'strong-code' });
+
 function freshFixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ludi-e2e-'));
   cpSync(join(kit, 'tests/fixtures/math-repo'), dir, { recursive: true });
@@ -193,7 +203,7 @@ test('E2E: task -> scout -> Context Pack (normalized) -> coder -> tests pass; se
   assert.equal(runTests(repo, 'npm test').ok, false, 'fixture must start red');
   const calls = [];
   const invoke = createScriptedInvoker({ 'pq/mq:low': SCOUT_OUT(repo), 'pd/md:high': GOOD_FIX }, calls);
-  const s = await runPipeline({ repoRoot: repo, task: 'Fix the failing average test', routing, registry: REG, agents, invoke, outDir: join(repo, '.pipeline-out') });
+  const s = await runPipeline({ repoRoot: repo, task: 'Fix the failing average test', routing, registry: REG, agents: PIPELINE_CHEAP, invoke, outDir: join(repo, '.pipeline-out') });
   assert.equal(s.outcome, 'success');
   assert.equal(s.escalated, false);
   assert.deepEqual(s.applied, ['src/math.js']);
@@ -214,7 +224,7 @@ test('E2E: coder primary produces a failing patch -> escalates to fallback -> su
   const repo = freshFixture();
   const calls = [];
   const invoke = createScriptedInvoker({ 'pq/mq:low': [SCOUT_OUT(repo), GOOD_FIX], 'pd/md:high': BAD_FIX }, calls);
-  const s = await runPipeline({ repoRoot: repo, task: 'Fix average', routing, registry: REG, agents, invoke, outDir: join(repo, '.pipeline-out') });
+  const s = await runPipeline({ repoRoot: repo, task: 'Fix average', routing, registry: REG, agents: PIPELINE_CHEAP, invoke, outDir: join(repo, '.pipeline-out') });
   assert.equal(s.outcome, 'success'); assert.equal(s.escalated, true); assert.equal(s.attempts, 2);
   assert.deepEqual(calls.map(c => c.modelId), ['pq/mq:low', 'pd/md:high', 'pq/mq:low']);
   const pack = readFileSync(join(repo, '.pipeline-out/context-pack.md'), 'utf8');
@@ -226,7 +236,7 @@ test('E2E: coder primary produces a failing patch -> escalates to fallback -> su
 test('E2E: all coder attempts fail -> outcome exhausted (2 candidates, maxAttempts 2), repo edits confined to relevant_files', async () => {
   const repo = freshFixture();
   const invoke = createScriptedInvoker({ 'pq/mq:low': SCOUT_OUT(repo), '*': BAD_FIX + `\n=== FILE: package.json ===\n{}\n=== END ===` });
-  const s = await runPipeline({ repoRoot: repo, task: 'Fix average', routing, registry: REG, agents, invoke, outDir: join(repo, '.pipeline-out') });
+  const s = await runPipeline({ repoRoot: repo, task: 'Fix average', routing, registry: REG, agents: PIPELINE_CHEAP, invoke, outDir: join(repo, '.pipeline-out') });
   assert.equal(s.outcome, 'escalation-candidate'); assert.equal(s.attempts, 2);
   assert.deepEqual(s.escalationCandidate, { backend: 'sol', modelId: 'ps/ms:high' });
   assert.equal(JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).name, 'fixture-math-repo', 'package.json must not be overwritten');
@@ -236,12 +246,12 @@ test('E2E: scout returns garbage -> scout escalates; --pack path bypasses scout'
   const repo = freshFixture();
   const calls = [];
   const invoke = createScriptedInvoker({ 'pq/mq:low': 'I could not find anything.', 'pc/mc:low': SCOUT_OUT(repo), 'pd/md:high': GOOD_FIX }, calls);
-  const s = await runPipeline({ repoRoot: repo, task: 'Fix average', routing, registry: REG, agents, invoke, outDir: join(repo, '.pipeline-out') });
+  const s = await runPipeline({ repoRoot: repo, task: 'Fix average', routing, registry: REG, agents: PIPELINE_CHEAP, invoke, outDir: join(repo, '.pipeline-out') });
   assert.equal(s.outcome, 'success');
   assert.deepEqual(s.steps.filter(x => x.step === 'scout').map(x => [x.backend, x.ok]), [['qoder', false], ['cheap', true]]);
   const repo2 = freshFixture();
   const packPath = join(repo2, 'pack.md'); writeFileSync(packPath, SCOUT_OUT(repo2));
-  const s2 = await runPipeline({ repoRoot: repo2, task: 'x', routing, registry: REG, agents, invoke: createScriptedInvoker({ 'pd/md:high': GOOD_FIX }), outDir: join(repo2, '.out'), packPath });
+  const s2 = await runPipeline({ repoRoot: repo2, task: 'x', routing, registry: REG, agents: PIPELINE_CHEAP, invoke: createScriptedInvoker({ 'pd/md:high': GOOD_FIX }), outDir: join(repo2, '.out'), packPath });
   assert.equal(s2.outcome, 'success'); assert.equal(s2.steps.length, 1);
 });
 
@@ -250,13 +260,55 @@ test('E2E greenfield: scout marks (new) files; coder may create only those; nest
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'g', private: true, type: 'module', scripts: { test: 'node --test test/greet.test.js' } }));
   const scoutOut = '## task\nAdd greet\n## goal\ngreet works\n## constraints\n## discovery\npartial — only package.json exists\n## relevant_files\n- `package.json` — test script\n- `src/greet.js` — (new) module\n- `test/greet.test.js` — (new) tests\n## expected_output\nnew files + passing tests\n';
   const coderOut = '=== FILE: src/greet.js ===\nexport const greet = n => `Hello, ${n}!`;\n=== END ===\n=== FILE: test/greet.test.js ===\nimport test from "node:test"; import assert from "node:assert/strict"; import { greet } from "../src/greet.js";\ntest("greet", () => assert.equal(greet("A"), "Hello, A!"));\n=== END ===\n=== FILE: docs/evil.md ===\nnope\n=== END ===';
-  const s = await runPipeline({ repoRoot: repo, task: 'Add greet', routing, registry: REG, agents, invoke: createScriptedInvoker({ 'pq/mq:low': scoutOut, 'pd/md:high': coderOut }), outDir: join(repo, '.out') });
+  const s = await runPipeline({ repoRoot: repo, task: 'Add greet', routing, registry: REG, agents: PIPELINE_CHEAP, invoke: createScriptedInvoker({ 'pq/mq:low': scoutOut, 'pd/md:high': coderOut }), outDir: join(repo, '.out') });
   assert.equal(s.outcome, 'success');
   assert.deepEqual(s.applied, ['src/greet.js', 'test/greet.test.js']);
   assert.ok(!existsSync(join(repo, 'docs/evil.md')));
   const pack = readFileSync(join(repo, '.out/context-pack.md'), 'utf8');
   assert.match(pack, /## discovery\npartial/);
   assert.match(pack, /`src\/greet.js` — \(new\) module/);
+});
+
+// Shipped-config coupling: ONE case still runs the unmodified production agent
+// definitions so the shipped scout default -> pipeline wiring stays observable
+// (kit.test.mjs pins the exact 'scout->cheap-code' contract; this asserts the
+// pipeline really honors whatever capability the shipped scout declares).
+test('E2E shipped config: the pipeline honors the shipped scout capability, and a cloned fixture stays independent', async () => {
+  const shippedScoutCap = agents.find(a => a.meta.name === 'scout').meta.capability;
+  const expectedScoutFirst = { 'cheap-code': 'pq/mq:low', 'strong-code': 'pd/md:high' }[shippedScoutCap];
+  assert.ok(expectedScoutFirst, `fixture registry covers cheap-code and strong-code scout defaults; got "${shippedScoutCap}"`);
+
+  const repo = freshFixture();
+  const calls = [];
+  const scoutBody = agents.find(a => a.meta.name === 'scout').body;
+  const invoke = createScriptedInvoker({ '*': req => req.systemPrompt === scoutBody ? SCOUT_OUT(repo) : GOOD_FIX }, calls);
+  const s = await runPipeline({ repoRoot: repo, task: 'Fix average', routing, registry: REG, agents, invoke, outDir: join(repo, '.pipeline-out') });
+  assert.equal(s.outcome, 'success');
+  assert.equal(s.steps.find(x => x.step === 'scout').capability, shippedScoutCap);
+  assert.equal(calls[0].modelId, expectedScoutFirst, 'scout must run on its shipped capability chain');
+  assert.equal(calls.length, 2, 'one scout call and one coder call; no hidden fallback');
+  assert.ok(s.steps.every(step => step.ok));
+  assert.equal(agents.find(a => a.meta.name === 'scout').meta.capability, shippedScoutCap, 'runPipeline must not mutate the shipped agent definitions');
+
+  // Even a source configured for strong-code yields the same pinned cheap
+  // fixture as a cheap-code source; neither source is modified.
+  const snapshot = structuredClone(agents);
+  for (const sourceDefault of ['cheap-code', 'strong-code']) {
+    const source = agentsFor({ scout: sourceDefault });
+    const sourceSnapshot = structuredClone(source);
+    const pinned = agentsWithCapabilities(source, { scout: 'cheap-code', coder: 'strong-code' }, routing);
+    assert.deepEqual(pinned, PIPELINE_CHEAP);
+    const fixtureRepo = freshFixture();
+    const fixtureCalls = [];
+    const fixtureInvoke = createScriptedInvoker({ '*': req => req.systemPrompt === scoutBody ? SCOUT_OUT(fixtureRepo) : GOOD_FIX }, fixtureCalls);
+    const result = await runPipeline({ repoRoot: fixtureRepo, task: 'Fix average', routing, registry: REG, agents: pinned, invoke: fixtureInvoke, outDir: join(fixtureRepo, '.pipeline-out') });
+    assert.equal(result.outcome, 'success');
+    assert.equal(result.steps.find(step => step.step === 'scout').capability, 'cheap-code');
+    assert.deepEqual(fixtureCalls.map(call => call.modelId), ['pq/mq:low', 'pd/md:high']);
+    assert.ok(result.steps.every(step => step.ok));
+    assert.deepEqual(source, sourceSnapshot, 'the pinned pipeline did not mutate its source configuration');
+  }
+  assert.deepEqual(agents, snapshot);
 });
 
 test('parseFileBlocks handles CRLF and multiple blocks', () => {

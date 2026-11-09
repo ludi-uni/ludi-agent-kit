@@ -206,7 +206,10 @@ test('stub E2E: binding appears at send, model/tool/turn update before completio
       return { ok: true, text: '```json\n{"status":"completed","summary":"done","acceptance":[{"id":"A1","met":true,"evidence":"checked"}]}\n```', child: { turns: 8, toolCalls: 7 } };
     },
   });
-  const running = orchestrate({ request: 'small read-only fixture', plan: [spec('t1', 'scout')], agents, routing,
+  // Pin cheap-code explicitly: the registry binds only the qoder backend, which
+  // serves cheap-code's primary chain. A scout shipped on a different capability
+  // must not break this activity-tracking fixture.
+  const running = orchestrate({ request: 'small read-only fixture', plan: [{ ...spec('t1', 'scout'), capability: 'cheap-code' }], agents, routing,
     registry: { version: 1, backends: { qoder: { provider: 'qoder', model: 'Qwen3.8-Flash', thinking: 'low' } } }, policy: DEFAULT_POLICY, runner, session, activity, repoRoot: dir });
   const modelId = await started.promise;
   const id = session.listRuns()[0].id;

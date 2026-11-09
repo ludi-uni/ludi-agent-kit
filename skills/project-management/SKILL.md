@@ -50,7 +50,7 @@ task for a different delivery is context, not a task to reopen automatically.
 Keep a concise managed block in the description, preserving human-authored text:
 
 ```text
-[Codex current work]
+[Agent current work]
 Goal / scope / acceptance:
 State: active | blocked | partial | ready for acceptance | completed | superseded
 Progress and evidence:
@@ -58,8 +58,17 @@ Active blockers: what / why / required condition / next action
 Result and remaining acceptance:
 Required follow-up: existing task link or none
 Next action:
-[/Codex current work]
+[/Agent current work]
 ```
+
+Compatibility: `[Codex current work]` is the legacy form of the same managed block;
+detect it wherever `[Agent current work]` is expected. When you next update a task
+carrying only the legacy block, preserve its content and any human-authored text and
+migrate it into a single `[Agent current work]` block as part of that normal update.
+If both markers already exist on a task, do not create a third block: merge into one
+`[Agent current work]` block, or stop and report if the merge is ambiguous. Never
+bulk-migrate unrelated tasks; migration happens only while touching the task for
+current work.
 
 These are descriptive meanings, not new Asana custom-field values. Use the project's
 existing sections and fields when their meaning is established. Synchronize meaningful

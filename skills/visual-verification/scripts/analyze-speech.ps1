@@ -276,7 +276,7 @@ try {
     $ffmpeg = Get-Command ffmpeg -CommandType Application -ErrorAction Stop
 }
 catch {
-    throw 'ffmpeg was not found on PATH.'
+    Write-BackendUnavailable -Message 'ffmpeg was not found on PATH.'
 }
 
 $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) 'agent-verification-lab\speech'

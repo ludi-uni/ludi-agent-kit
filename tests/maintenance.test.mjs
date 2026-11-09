@@ -12,11 +12,17 @@ import { loadRouting } from '../lib/routing.mjs';
 import { loadAgents } from '../lib/agents.mjs';
 import { mergeRegistries } from '../lib/registry.mjs';
 import { parseModelList } from '../adapters/pi/lib/list-models.mjs';
+import { agentsWithCapabilities } from './helpers/capability-fixtures.mjs';
 
 const kit = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fx = join(kit, 'tests/fixtures/maintenance');
 const routing = loadRouting(join(kit, 'routing/routing.json'));
 const { agents } = loadAgents(join(kit, 'agents'), routing);
+// Fixed capability fixture for the MECHANISM tests below: evaluateMaintenance
+// maps affected capabilities -> agent names, which must not depend on which
+// capability agents/*.md currently ships with. The shipped binding itself is
+// asserted in the separate shipped-config test at the bottom.
+const fixtureAgents = agentsWithCapabilities(agents, { scout: 'cheap-code' }, routing);
 const catalog = loadCatalog(join(fx, 'catalog.json'));
 const events = loadEvents(join(fx, 'events.json')); // qoder/Qwen3.8-Flash free-campaign-ended
 
@@ -68,7 +74,7 @@ test('free-campaign end alone does not force a change: current model is re-score
 
 test('a forced migration (removed model) produces a full proposal with rollback', () => {
   const removed = [{ type: 'removed', provider: 'qoder', model: 'Qwen3.8-Flash', asOf: '2026-03-15' }];
-  const report = evaluateMaintenance({ routing, registry: baseRegistry(), agents, catalog, events: removed });
+  const report = evaluateMaintenance({ routing, registry: baseRegistry(), agents: fixtureAgents, catalog, events: removed });
   const change = report.changes.find(c => c.affected.backend === 'qoder');
   assert.ok(change.changeReason.includes('removed'));
   assert.deepEqual(change.affected.capabilities, ['cheap-code', 'orchestration']);
@@ -185,6 +191,30 @@ test('parseModelList reads the real `pi --list-models` table (space-separated co
   assert.ok(models.has('freetoken/Qwen3.6-35B-A3B-NVFP4'));
   assert.ok(models.has('openai-codex/gpt-5.6-luna'));
   assert.ok(!providers.has('provider')); // header row excluded
+});
+
+// Shipped-config coupling: recompute the EXPECTED agent names from the real
+// agents/*.md defaults instead of hardcoding them, so the coupling stays
+// observable whichever capability scout ships with (kit.test.mjs pins the exact
+// values). Only capabilities whose primary backend is qoder are affected here;
+// a strong-code scout uses a different primary and is excluded.
+test('shipped agent definitions drive the affected-agent report', () => {
+  const removed = [{ type: 'removed', provider: 'qoder', model: 'Qwen3.8-Flash', asOf: '2026-03-15' }];
+  const report = evaluateMaintenance({ routing, registry: baseRegistry(), agents, catalog, events: removed });
+  const change = report.changes.find(c => c.affected.backend === 'qoder');
+  const expected = agents
+    .filter(a => ['cheap-code', 'orchestration'].includes(a.meta.capability))
+    .map(a => a.meta.name)
+    .sort();
+  assert.deepEqual(change.affected.agents, expected);
+  const scoutCap = agents.find(a => a.meta.name === 'scout').meta.capability;
+  if (scoutCap === 'cheap-code') {
+    assert.ok(change.affected.agents.includes('scout'), 'a shipped cheap-code scout is affected by the qoder change');
+  } else if (scoutCap === 'strong-code') {
+    assert.ok(!change.affected.agents.includes('scout'), 'a shipped strong-code scout is not affected by the qoder change');
+  } else {
+    assert.fail(`unexpected shipped scout capability "${scoutCap}" — extend this coupling check`);
+  }
 });
 
 test('loadAvailabilityFile produces the same shape', () => {

@@ -72,7 +72,10 @@ function Assert-OutputAvailable {
     param(
         [Parameter(Mandatory)]
         [string]$Path,
-        [switch]$Overwrite
+        [switch]$Overwrite,
+        # Valid PowerShell override forms for this operation, e.g. '-Overwrite'
+        # or '-Frames:$false'. Used only to build the hint in error messages.
+        [string]$OverwriteHint
     )
 
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -85,7 +88,13 @@ function Assert-OutputAvailable {
     }
 
     if (-not $Overwrite) {
-        throw "Output already exists; specify -Overwrite to replace it: $Path"
+        $hint = if (-not [string]::IsNullOrWhiteSpace($OverwriteHint)) {
+            "specify $OverwriteHint to replace it"
+        }
+        else {
+            'choose a different output path or a fresh run directory (this operation cannot overwrite)'
+        }
+        throw "Output already exists; ${hint}: $Path"
     }
 }
 

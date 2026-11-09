@@ -19,7 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { openStore } from '../lib/orchestrator/store.mjs';
 import { newTask } from '../lib/orchestrator/task-store.mjs';
 import { DEFAULT_POLICY } from '../lib/orchestrator/policy.mjs';
-import { parseOlderThan, formatCleanup, resumeOrchestration } from '../lib/orchestrator/api.mjs';
+import { parseOlderThan, formatCleanup, resumeOrchestration, pruneOrchestrationRuns } from '../lib/orchestrator/api.mjs';
 
 const kit = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const cli = join(kit, 'scripts/orchestrate.mjs');
@@ -203,7 +203,7 @@ test('G: clearRuns previews by default; --force deletes terminal only; --include
   session.close();
 });
 
-test('H: CLI --prune honours --older-than and prints Japanese output', () => {
+test('H: CLI --prune previews by default and deletes only with --force', () => {
   const path = dbPath();
   const session = openStore(path);
   const r = session.createRun({ request: 'old run', policy: DEFAULT_POLICY });
@@ -217,19 +217,26 @@ test('H: CLI --prune honours --older-than and prints Japanese output', () => {
   assert.equal(misplaced.status, 2);
   assert.match(misplaced.stderr, /--older-than requires --prune/);
 
-  const keep = runCli(['--prune', '--older-than', '7d', '--store', path]);
-  assert.equal(keep.status, 0, keep.stderr);
-  assert.match(keep.stdout, /削除しました: 0 ラン/);
-  const gone = runCli(['--prune', '--store', path]);
-  assert.equal(gone.status, 0, gone.stderr);
-  assert.match(gone.stdout, /削除しました: 0 ラン/);
+  // Default is a read-only preview: the run survives even past the cutoff.
   const db = new DatabaseSync(path);
   db.prepare('UPDATE runs SET updated_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', r);
   db.close();
-  const preview = runCli(['--prune', '--dry-run', '--store', path]);
+  const keep = runCli(['--prune', '--older-than', '7d', '--store', path]);
+  assert.equal(keep.status, 0, keep.stderr);
+  assert.match(keep.stdout, /削除対象（プレビュー）: 1 ラン/);
+  const preview = runCli(['--prune', '--store', path]);
   assert.equal(preview.status, 0, preview.stderr);
   assert.match(preview.stdout, /削除対象（プレビュー）: 1 ラン/);
-  const aged = runCli(['--prune', '--store', path]);
+  assert.match(preview.stdout, /--force/);
+  // --dry-run wins over --force: still a preview, nothing deleted.
+  const dry = runCli(['--prune', '--force', '--dry-run', '--json', '--store', path]);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.equal(JSON.parse(dry.stdout).executed, false);
+  const preserved = openStore(path);
+  try { assert.equal(preserved.listRuns().length, 1, 'preview and dry-run wrote nothing'); }
+  finally { preserved.close(); }
+  // --force deletes only the matching terminal run.
+  const aged = runCli(['--prune', '--force', '--store', path]);
   assert.equal(aged.status, 0, aged.stderr);
   assert.match(aged.stdout, /削除しました: 1 ラン/);
   const check = openStore(path);
@@ -302,10 +309,38 @@ test('J: CLI --clear previews, --force clears terminal, --include-active is expl
   assert.match(bad.stderr, /--include-active requires --clear/);
   const bad2 = runCli(['--force', '--list', '--store', path]);
   assert.equal(bad2.status, 2);
-  assert.match(bad2.stderr, /--force requires --delete or --clear/);
+  assert.match(bad2.stderr, /--force requires --prune, --delete or --clear/);
   const bad3 = runCli(['--prune', '--clear', '--store', path]);
   assert.equal(bad3.status, 2);
   assert.match(bad3.stderr, /exclusive/);
+});
+
+test('P: pruneOrchestrationRuns previews without force and deletes only terminal matches with force', () => {
+  const path = dbPath();
+  const session = openStore(path);
+  const done = session.createRun({ request: 'done', policy: DEFAULT_POLICY });
+  session.updateRun(done, { status: 'completed' });
+  const live = session.createRun({ request: 'live', policy: DEFAULT_POLICY });
+  const recent = session.createRun({ request: 'recent', policy: DEFAULT_POLICY });
+  session.updateRun(recent, { status: 'completed' });
+  const db = new DatabaseSync(path);
+  db.prepare('UPDATE runs SET updated_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', done);
+  db.close();
+  const ctx = { session };
+
+  const preview = pruneOrchestrationRuns(ctx);
+  assert.equal(preview.executed, false, 'no force -> read-only preview');
+  assert.deepEqual(preview.deletable, [done]);
+  assert.equal(session.listRuns().length, 3, 'preview deleted nothing');
+  assert.equal(pruneOrchestrationRuns(ctx, { force: false }).executed, false);
+
+  const executed = pruneOrchestrationRuns(ctx, { force: true });
+  assert.equal(executed.executed, true);
+  assert.deepEqual(executed.deletable, [done]);
+  assert.equal(session.getRun(done), null);
+  assert.ok(session.getRun(live), 'active run survived forced prune');
+  assert.ok(session.getRun(recent), 'recent terminal run survived forced prune');
+  session.close();
 });
 
 test('K: parseOlderThan validates durations', () => {

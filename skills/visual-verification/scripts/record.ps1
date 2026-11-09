@@ -33,7 +33,7 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
 }
 
 $resolvedOutputPath = [IO.Path]::GetFullPath($OutputPath)
-Assert-OutputAvailable -Path $resolvedOutputPath -Overwrite:$Overwrite
+Assert-OutputAvailable -Path $resolvedOutputPath -Overwrite:$Overwrite -OverwriteHint '-Overwrite'
 $target = Resolve-CaptureTarget -Mode $Mode -X $X -Y $Y -Width $Width -Height $Height -WindowTitle $WindowTitle -Hwnd $Hwnd
 $invariantCulture = [Globalization.CultureInfo]::InvariantCulture
 $durationText = $Duration.ToString('G17', $invariantCulture)

@@ -39,6 +39,12 @@ function fakeRunner(handler) {
   return { calls, async run(task, ctx) { calls.push({ id: task.id, attempt: task.attempts, capability: task.capability, deps: ctx.dependencyResults.map(d => d.id), decisions: [...task.decisions] }); return handler(task, ctx, calls); } };
 }
 const spec = (id, agent, dependencies = [], extra = {}) => ({ id, title: `task ${id}`, goal: `goal ${id}`, agent, dependencies, acceptance: ['done'], ...extra });
+// Tasks that exercise the candidate/escalation MECHANISM pin the capability
+// explicitly so the shipped agent defaults (agents/*.md) may change without
+// invalidating the fixture chains. Shipped-default coupling is covered by the
+// planner/dry-run/'codex quota 0' tests below, which intentionally run unpinned.
+const CHEAP = { capability: 'cheap-code' };
+const STRONG = { capability: 'strong-code' };
 const run = ({ policy, ...o }) => orchestrate({ request: 'r', agents, routing, registry: REG, policy: policyWith(policy), ...o });
 const jsonReply = obj => `notes\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
 
@@ -142,7 +148,7 @@ test('successful task through the real runner: routing picks the model and a str
   const calls = [];
   const invoke = createScriptedInvoker({ '*': req => jsonReply({ status: 'completed', summary: `ok from ${req.modelId}`, acceptance: [{ id: 'A1', met: true, evidence: 'ran check' }] }) }, calls);
   const runner = createAgentRunner({ invoke, agents, routing, registry: REG });
-  const r = await run({ plan: [spec('a', 'scout'), spec('b', 'coder', ['a'])], runner });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP), spec('b', 'coder', ['a'], STRONG)], runner });
   assert.equal(r.status, 'completed');
   assert.deepEqual(calls.map(c => c.modelId), ['pc/mc:low', 'ps/ms:high']);
   assert.equal(r.tasks[1].result.summary, 'ok from ps/ms:high');
@@ -166,7 +172,7 @@ test('retry: a bare "Done" is a protocol failure; the SAME attempt advances to t
   const calls = [];
   const invoke = createScriptedInvoker({ '*': () => replies.shift() }, calls);
   const runner = createAgentRunner({ invoke, agents, routing, registry: REG });
-  const r = await run({ plan: [spec('a', 'scout')], runner });
+  const r = await run({ plan: [spec('a', 'scout', [], CHEAP)], runner });
   assert.equal(r.status, 'completed');
   // New policy: MALFORMED_RESULT advances to the next candidate within the same
   // orchestrator attempt, so the task completes in ONE attempt across two models
@@ -346,6 +352,11 @@ test('model planner: the orchestrator agent plans via routing; invalid output fa
 });
 
 test('codex quota 0: orchestrator completes on qoder/devin, then freetoken when they are exhausted', async () => {
+  // SHIPPED-CONFIG COUPLING TEST: this plan comes from planRules + the real
+  // agents/*.md defaults on purpose (scout/tester -> cheap-code, coder ->
+  // strong-code, reviewer -> deep-review). It intentionally stays unpinned so a
+  // shipped capability flip changes the observed model chain here and in
+  // kit.test.mjs — mechanism coverage lives in the pinned tests above.
   // Every openai-codex model reports usage-limit; routing must still reach qoder (cheap-code),
   // devin (strong-code/deep-review) and finally the freetoken local fallback.
   const reg = { version: 1, backends: {

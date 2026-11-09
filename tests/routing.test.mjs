@@ -52,6 +52,7 @@ test('loadRouting applies local file and excludes agents for disabled capabiliti
     writeFileSync(join(dir, 'routing', 'routing.local.json'), JSON.stringify({ version: 1, capabilities: { x: null } }));
     const routing = loadRouting(join(dir, 'routing', 'routing.json'));
     assert.equal(routing.capabilities.x, undefined);
+    assert.deepEqual(routing.disabledCapabilities, ['x']);
     const { agents, errors } = loadAgents(join(kit, 'agents'), mergeLocalRouting(loadRouting(join(kit, 'routing', 'routing.json')), { version: 1, capabilities: { 'cheap-code': null } }));
     assert.deepEqual(errors, []);
     assert.ok(!agents.some(agent => agent.meta.capability === 'cheap-code'));
@@ -91,6 +92,46 @@ test('version, names and tiers are checked', () => {
 test('escalation ladders must reference known capabilities', () => {
   const c = base(); c.escalation = { ladders: { l: ['x', 'ghost'] } };
   assert.ok(validateRouting(c).some(e => e.includes('unknown capability "ghost"')));
+});
+
+test('an agent with an undefined (typo\'d) capability surfaces a validation error', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kit-agents-'));
+  try {
+    writeFileSync(join(dir, 'broken.md'), '---\nname: broken\ndescription: d\ncapability: strong-cdoe\n---\nbody');
+    const routing = loadRouting(join(kit, 'routing', 'routing.json'));
+    const { agents, errors } = loadAgents(dir, routing);
+    assert.deepEqual(agents.map(agent => agent.meta.name), ['broken']);
+    assert.ok(errors.some(e => e.includes('capability "strong-cdoe" not defined')), JSON.stringify(errors));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an agent whose capability is intentionally disabled is skipped without errors', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kit-agents-'));
+  try {
+    writeFileSync(join(dir, 'worker.md'), '---\nname: worker\ndescription: d\ncapability: x\n---\nbody');
+    const routing = mergeLocalRouting(base(), { version: 1, capabilities: { x: null } });
+    const { agents, errors } = loadAgents(dir, routing);
+    assert.deepEqual(agents, []);
+    assert.deepEqual(errors, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('layered local routing keeps disable provenance and supports re-enable', () => {
+  const once = mergeLocalRouting(base(), { version: 1, capabilities: { x: null } });
+  assert.equal(once.capabilities.x, undefined);
+  assert.deepEqual(once.disabledCapabilities, ['x']);
+  // Re-disabling an already disabled capability stays idempotent, not an error.
+  const again = mergeLocalRouting(once, { version: 1, capabilities: { x: null } });
+  assert.deepEqual(again.disabledCapabilities, ['x']);
+  // An object override on a later layer re-enables the capability.
+  const reenabled = mergeLocalRouting(once, { version: 1, capabilities: { x: { primary: 'b' } } });
+  assert.equal(reenabled.capabilities.x.primary, 'b');
+  assert.equal(reenabled.disabledCapabilities, undefined);
+  assert.deepEqual(resolveBackends(reenabled, 'x'), ['b']);
 });
 
 test('resolveBackends returns primary then fallbacks in order', () => {

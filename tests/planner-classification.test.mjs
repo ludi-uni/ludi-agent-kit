@@ -15,6 +15,32 @@ const { agents } = loadAgents(join(kit, 'agents'), routing);
 const scouts = req => planRules(req, { agents }).tasks.filter(t => t.agent === 'scout').length;
 const isSplit = req => scouts(req) > 1;
 
+test('negated investigation-only requests generate implementation and verification, but independent holds win', () => {
+  for (const request of [
+    '調査だけで終わらず、修正を実装してテストしてください。',
+    'まず調査だけで終わらず、承認済み範囲の改善を実装・検証してください。',
+    'PuppetFlow V2をRustへ移行してください。調査だけで終わらず、承認済み範囲の改善を実装・検証してください。',
+    '調査のみではなく、修正を実装してください。',
+    '分析だけにとどまらず、改善を実装してください。',
+    'Do not just investigate. Implement the fix and test it.',
+  ]) {
+    const plan = planRules(request, { agents });
+    assert.equal(plan.classification.staged, false, request);
+    for (const role of ['coder', 'tester', 'reviewer']) assert.ok(plan.tasks.some(t => t.agent === role), `${role}: ${request}`);
+  }
+  for (const request of [
+    '調査だけしてください。実装は後で。',
+    '調査のみ。修正案を報告してください。',
+    '調査だけで終わらず改善しますが、承認までは実装しない。',
+    'まずPhase 0だけを開始してください。調査だけで終わらず実装するのは承認後です。',
+    'Only investigate. Do not implement until approval.',
+  ]) {
+    const plan = planRules(request, { agents });
+    assert.equal(plan.classification.staged, true, request);
+    assert.ok(!plan.tasks.some(t => t.agent === 'coder'), request);
+  }
+});
+
 const SPLIT = [
   'コミットから好みを推測してUXを改善',
   'コミット履歴を分析してUIの好みを反映して',

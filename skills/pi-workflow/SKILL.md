@@ -23,4 +23,6 @@ Choose one route; do not load every reference:
 Use actual available tools. Keep actions tied to evidence and acceptance, preserve
 unrelated work, run proportionate checks, and report results and limits. Do not
 automatically delegate, select a provider/model, modify live services, or create
-durable process artifacts.
+durable process artifacts. Invoking this skill alone grants no delegation,
+provider/model selection, live-service, or external-change permission; the parent
+judges those against the current approval and applicable instructions.

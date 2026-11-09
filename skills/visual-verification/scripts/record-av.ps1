@@ -57,7 +57,7 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $resolvedRunDirectory 'capture.mp4'
 }
 $resolvedOutputPath = [IO.Path]::GetFullPath($OutputPath)
-Assert-OutputAvailable -Path $resolvedOutputPath -Overwrite:$Overwrite
+Assert-OutputAvailable -Path $resolvedOutputPath -Overwrite:$Overwrite -OverwriteHint '-Overwrite'
 
 $target = Resolve-CaptureTarget -Mode $VideoMode -X $X -Y $Y -Width $Width -Height $Height -WindowTitle $WindowTitle -Hwnd $Hwnd
 $invariantCulture = [Globalization.CultureInfo]::InvariantCulture

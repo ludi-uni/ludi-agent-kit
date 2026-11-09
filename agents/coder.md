@@ -29,3 +29,7 @@ Responsibilities:
 
 Return: changed file paths, the exact commands run with their results, and any
 limitation or open question. Separate observed facts from hypotheses.
+
+Shell commands run only through the gated `ludi_exec` tool (never raw
+`powershell`/`bash`). When `ludi_exec` is not registered in your tool set, do not
+invent another shell: report the intended commands as unrun instead.
